@@ -7,6 +7,8 @@
 - 매치 기록, 선수·챔피언·포지션·진영·듀오 통계, 팀 밸런스, 수동 등록, 수집기 다운로드
 - Next.js 16 (App Router) + Supabase(Postgres) + Vercel
 
+**운영 주소:** https://knucse-lol.vercel.app/group/main · 상태 점검 https://knucse-lol.vercel.app/api/health · 관리 https://knucse-lol.vercel.app/group/main/admin
+
 > 이 저장소의 이전 프로젝트(`MakeupTeam/` 노트북)는 작업 트리에서만 제거했습니다.
 > 커밋 이력은 그대로이므로 `git checkout 8b37a47 -- MakeupTeam README.md` 로 언제든 되살릴 수 있습니다.
 

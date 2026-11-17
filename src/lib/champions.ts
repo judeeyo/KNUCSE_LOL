@@ -70,6 +70,41 @@ export function normalizeChampionName(name: string): string {
   return KEY_TO_KO[name] || KEY_TO_KO[name.replace(/\s/g, "")] || name;
 }
 
+/** 고정 버전에 없는 아이콘(새 챔피언 등)을 위해, 실패하면 최신 패치 버전 주소로 한 번 더 시도한다 */
+const LATEST_VERSION_KEY = "naejeon-ddragon-latest";
+let latestVersionPromise: Promise<string | null> | null = null;
+
+export function getLatestDdragonVersion(): Promise<string | null> {
+  if (latestVersionPromise) return latestVersionPromise;
+  latestVersionPromise = (async () => {
+    try {
+      const cached = JSON.parse(localStorage.getItem(LATEST_VERSION_KEY) || "null") as { v: string; at: number } | null;
+      if (cached && Date.now() - cached.at < 24 * 3600 * 1000) return cached.v;
+    } catch {
+      // 저장소를 못 쓰면 매번 조회
+    }
+    try {
+      const res = await fetch("https://ddragon.leagueoflegends.com/api/versions.json");
+      const v = ((await res.json()) as string[])[0];
+      if (!v) return null;
+      try {
+        localStorage.setItem(LATEST_VERSION_KEY, JSON.stringify({ v, at: Date.now() }));
+      } catch {
+        // 무시
+      }
+      return v;
+    } catch {
+      return null;
+    }
+  })();
+  return latestVersionPromise;
+}
+
+/** 같은 아이콘을 다른 패치 버전 주소로 */
+export function withDdragonVersion(url: string, version: string): string {
+  return url.replace(`/cdn/${DDRAGON_VERSION}/`, `/cdn/${version}/`);
+}
+
 export function getChampionIconUrl(championName: string): string | null {
   // 1. 한글 이름으로 매핑 시도
   let key = KO_TO_KEY[championName];

@@ -436,3 +436,14 @@ describe("derivePreferredLanes", () => {
     expect(derivePreferredLanes(a.laneStats, 2)).toEqual([]); // needs >=2 games
   });
 });
+
+describe("leaderboardMinGames", async () => {
+  const { leaderboardMinGames } = await import("./stats");
+  it("전체 경기 수의 20%, 1~21판", () => {
+    expect(leaderboardMinGames(0)).toBe(1);
+    expect(leaderboardMinGames(28)).toBe(6);
+    expect(leaderboardMinGames(50)).toBe(10);
+    expect(leaderboardMinGames(105)).toBe(21);
+    expect(leaderboardMinGames(400)).toBe(21);
+  });
+});

@@ -5,7 +5,7 @@ import { StatTable, stickyHead } from "@/components/ui/stat-table";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { ChevronLeft, ChevronRight, Crown } from "lucide-react";
-import { rankMomentum, type PlayerStats, type Award } from "@/lib/stats";
+import { leaderboardMinGames, rankMomentum, type PlayerStats, type Award } from "@/lib/stats";
 
 type SortKey =
   | "totalScore" | "winRate" | "avgKda" | "csPerMin" | "avgVision"
@@ -15,8 +15,6 @@ const MULTIKILL_LABEL: Record<number, string> = {
   2: "더블킬", 3: "트리플킬", 4: "쿼드라킬", 5: "펜타킬",
 };
 
-// 리더보드 최소 경기 수 — 20판 이하는 표에서 제외
-const LEADERBOARD_MIN_GAMES = 21;
 
 // 정렬 가능한 헤더 셀 (렌더마다 재생성되지 않도록 컴포넌트 밖에 정의)
 function SortTh({
@@ -46,10 +44,13 @@ function SortTh({
 export function PlayerStatsTab({
   playerStats,
   awards,
+  matchCount,
 }: {
   playerStats: PlayerStats[];
   awards: Award[];
+  matchCount: number;
 }) {
+  const [showAll, setShowAll] = useState(false);
   const [sortBy, setSortBy] = useState<SortKey>("totalScore");
   const [sortAsc, setSortAsc] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerStats | null>(null);
@@ -63,7 +64,10 @@ export function PlayerStatsTab({
     }
   };
 
-  const eligible = playerStats.filter((p) => p.gamesPlayed >= LEADERBOARD_MIN_GAMES);
+  const minGames = leaderboardMinGames(matchCount);
+  const qualified = playerStats.filter((p) => p.gamesPlayed >= minGames);
+  const hiddenCount = playerStats.length - qualified.length;
+  const eligible = showAll ? playerStats : qualified;
   const sorted = [...eligible].sort((a, b) => {
     const diff = (a[sortBy] as number) - (b[sortBy] as number);
     return sortAsc ? diff : -diff;
@@ -80,7 +84,20 @@ export function PlayerStatsTab({
       {awards.length > 0 && <AwardsCarousel awards={awards} />}
 
       {/* Leaderboard */}
-      <div className="text-xs text-ink-tertiary">📋 리더보드 · {LEADERBOARD_MIN_GAMES}판 이상만 표시 (20판 이하 제외)</div>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="text-xs text-ink-tertiary break-keep">
+          📋 리더보드 · {showAll ? `전체 ${playerStats.length}명` : `${minGames}판 이상 ${qualified.length}명`}
+          {!showAll && hiddenCount > 0 && <span> (전체 {matchCount}경기의 20% 기준, {hiddenCount}명 숨김)</span>}
+        </div>
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="text-xs text-primary hover:text-primary-hover cursor-pointer whitespace-nowrap"
+          >
+            {showAll ? `${minGames}판 이상만 보기` : `전체 ${playerStats.length}명 보기`}
+          </button>
+        )}
+      </div>
       {sorted.some((e) => e.visionGames < e.gamesPlayed || e.damageGames < e.gamesPlayed) && (
         <div className="text-xs text-ink-tertiary">
           ℹ️ 시야점수·골드당 딜은 상세 데이터가 수집된 경기만으로 계산합니다. 수기로 복원한 과거 경기는 이 값이 없어 <span className="text-ink-subtle">미수집</span>으로 표시되며, 점수에는 유불리 없이(중립) 반영됩니다.

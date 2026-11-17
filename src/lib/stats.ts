@@ -7,6 +7,15 @@ function byCreatedAt<T extends { createdAt: string }>(a: T, b: T): number {
 
 // ─── Player Stats ───
 
+/**
+ * 리더보드에 올리는 최소 경기 수. 전체 경기 수의 20% (최소 1판, 최대 21판).
+ * 기록이 쌓이면 원래 기준(21판)까지 올라가고, 경기가 적을 때는 몇 명만 남지 않도록 낮아진다.
+ *   28경기 → 6판, 50경기 → 10판, 105경기 이상 → 21판
+ */
+export function leaderboardMinGames(totalMatches: number): number {
+  return Math.max(1, Math.min(21, Math.ceil(totalMatches * 0.2)));
+}
+
 export interface PlayerStats {
   nickname: string;
   gamesPlayed: number;

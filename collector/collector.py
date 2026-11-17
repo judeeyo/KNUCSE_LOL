@@ -643,6 +643,8 @@ def describe_upload(status, result):
         result = result or {}
         if result.get("pendingReview"):
             return "🟡 업로드됨 — 기존 수기 기록과 중복 후보로 보류 (사이트 '관리'에서 검토)"
+        if result.get("merged"):
+            return "🔗 기존 수기 기록과 같은 경기 — 상세 지표를 채워 합침"
         if result.get("updated"):
             return "🔄 기존 경기 갱신 완료 (날짜·스탯 덮어쓰기)"
         if result.get("duplicate"):
@@ -742,8 +744,15 @@ def handle_end_of_game(lock_info, last_game_id):
         log("  ⚠️  데이터 불완전, 건너뜁니다")
         return game_id
 
-    if custom is None and len(match_data["players"]) != 10:
-        log("  ⚠️  커스텀 여부 확인 불가 + 10명이 아니므로 건너뜁니다")
+    # 혼자 한 커스텀(봇전·1대1 등)은 내전이 아니므로 올리지 않는다
+    humans = [p for t in eog.get("teams", []) for p in t.get("players", []) if not p.get("botPlayer")]
+    blue = sum(1 for p in match_data["players"] if p["team"] == "blue")
+    if len(match_data["players"]) != 10 or len(humans) != 10 or blue != 5:
+        log(f"  ⏭️  내전이 아니므로 건너뜁니다 (참가 {len(match_data['players'])}명, 사람 {len(humans)}명)")
+        return game_id
+    map_id = (eog.get("mapId") if isinstance(eog, dict) else None)
+    if map_id is not None and int(map_id) != RIFT_MAP_ID:
+        log(f"  ⏭️  소환사의 협곡이 아니므로 건너뜁니다 (map {map_id})")
         return game_id
 
     log(f"  📊 {len(match_data['players'])}명 데이터 추출 완료")
@@ -1035,6 +1044,65 @@ def fetch_custom_games(lock_info):
     ]
 
 
+# ─── 내전 판별 ───
+# 내전 = 소환사의 협곡에서 사람 10명이 5대5 로 한 사용자 설정 게임.
+# 혼자 한 커스텀(봇전, 1대1, 연습 등)은 제외한다.
+RIFT_MAP_ID = 11
+_ZERO_PUUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _is_bot_identity(player_info):
+    """매치 상세의 participantIdentities[].player 가 봇인지.
+    응답 형식이 버전마다 달라 "봇이라는 분명한 신호"가 있을 때만 봇으로 본다 (사람을 봇으로 오판해 내전을 버리지 않도록)."""
+    if player_info is None:
+        return True
+    if player_info.get("isBot") or player_info.get("botPlayer"):
+        return True
+    puuid = str(player_info.get("puuid") or "")
+    if puuid in (_ZERO_PUUID, "BOT"):
+        return True
+    # puuid 가 없고 계정 번호가 명시적으로 0 이면 봇
+    if not puuid and "summonerId" in player_info and not player_info.get("summonerId") and not player_info.get("accountId"):
+        return True
+    return False
+
+
+def naejeon_check(full_game):
+    """(내전 여부, 사유). 사유는 제외될 때 로그·목록에 보여 줄 짧은 설명"""
+    if not full_game:
+        return False, "상세 조회 실패"
+    map_id = full_game.get("mapId")
+    if map_id is not None and int(map_id) != RIFT_MAP_ID:
+        return False, f"협곡이 아님(map {map_id})"
+    participants = full_game.get("participants") or []
+    identities = {i.get("participantId"): (i.get("player") or {}) for i in full_game.get("participantIdentities") or []}
+    humans = [p for p in participants if not _is_bot_identity(identities.get(p.get("participantId")))]
+    blue = sum(1 for p in humans if p.get("teamId", 100) == 100)
+    red = len(humans) - blue
+    if len(participants) != 10:
+        return False, f"{len(participants)}명 게임"
+    if len(humans) != 10:
+        return False, f"사람 {len(humans)}명 + 봇 {10 - len(humans)}명"
+    if blue != 5 or red != 5:
+        return False, f"{blue}대{red}"
+    return True, "5대5 10명"
+
+
+def classify_custom_games(lock_info, games, progress=None):
+    """커스텀 게임마다 10명 상세를 조회해 내전만 골라낸다.
+    반환: (내전 목록, 제외 목록[(game, 사유)]). 각 게임에 상세(_full)를 붙여 두어 저장·업로드 때 다시 조회하지 않는다."""
+    naejeon, excluded = [], []
+    for i, g in enumerate(games):
+        if progress:
+            progress(i + 1, len(games))
+        full = g.get("_full") or get_full_game(lock_info, g.get("gameId"))
+        g["_full"] = full
+        ok, reason = naejeon_check(full)
+        g["_reason"] = reason
+        (naejeon if ok else excluded).append(g if ok else (g, reason))
+    return naejeon, excluded
+
+
 def build_history_match(lock_info, game, label=""):
     """과거 게임 1개의 10명 전체 데이터를 조회해 서버 포맷으로 변환. (match_data, raw) 또는 (None, None)"""
     game_id = game.get("gameId")
@@ -1042,14 +1110,19 @@ def build_history_match(lock_info, game, label=""):
         log(f"  {label} ⚠️  gameId 없음, 건너뜀")
         return None, None
 
-    # 전체 10명 데이터 조회 (목록에는 본인만 들어있음)
-    full_game = get_full_game(lock_info, game_id)
+    # 전체 10명 데이터 조회 (목록에는 본인만 들어있음). 내전 판별 때 받아 둔 상세가 있으면 재사용
+    full_game = game.get("_full") or get_full_game(lock_info, game_id)
     if not full_game:
         log(f"  {label} ⚠️  상세 데이터 조회 실패, 건너뜀")
         return None, None
 
+    ok, reason = naejeon_check(full_game)
+    if not ok:
+        log(f"  {label} ⏭️  내전이 아님({reason}), 건너뜀")
+        return None, None
+
     match_data = format_history_match(full_game)
-    if not match_data or len(match_data["players"]) < 2:
+    if not match_data or len(match_data["players"]) != 10:
         log(f"  {label} ⚠️  데이터 불완전, 건너뜀")
         return None, None
     return match_data, full_game
@@ -1437,7 +1510,26 @@ class CollectorGUI:
                 return
             self.lock_info_for_history = lock_info
             games = fetch_custom_games(lock_info)
-            if not games:
+            if games:
+                self.log_from_thread(f"커스텀 게임 {len(games)}개 — 10명이 5대5로 한 내전인지 하나씩 확인하는 중...")
+                last = [0]
+
+                def progress(i, n):
+                    if i == n or i - last[0] >= 20:
+                        last[0] = i
+                        self.ui_queue.put(("status", f"내전 확인 중 {i}/{n}"))
+
+                games, excluded = classify_custom_games(lock_info, games, progress)
+                if excluded:
+                    reasons = {}
+                    for _, r in excluded:
+                        key = r.split("(")[0] if r.startswith("협곡") else r
+                        reasons[key] = reasons.get(key, 0) + 1
+                    detail = ", ".join(f"{k} {v}개" for k, v in sorted(reasons.items(), key=lambda x: -x[1]))
+                    self.log_from_thread(f"내전이 아닌 커스텀 {len(excluded)}개 제외: {detail}")
+                if not games:
+                    self.log_from_thread("10명이 5대5로 한 내전이 없습니다.")
+            else:
                 self.log_from_thread("조회 가능한 전적에 커스텀 게임이 없습니다.")
                 self.log_from_thread("[진단] 버튼을 누르면 원인 파악용 결과가 로그에 나옵니다. 그 내용을 관리자에게 보내주세요.")
             self.ui_queue.put(("games", games))
@@ -1458,7 +1550,7 @@ class CollectorGUI:
                 tags=("win" if my_win else "loss",),
             )
         if games:
-            self.log(f"커스텀 게임 {len(games)}개를 찾았습니다. 업로드할 경기를 선택하세요.")
+            self.log(f"내전 {len(games)}경기를 찾았습니다. (전체를 저장하려면 아무것도 선택하지 않고 [JSON 저장])")
             self.notebook.select(1)
 
     def select_all_games(self):
@@ -1682,7 +1774,9 @@ def history_mode():
         return
 
     print("  클라이언트 감지 완료. 매치 히스토리 조회 중...")
-    custom_games = fetch_custom_games(lock_info)
+    custom_games, excluded = classify_custom_games(lock_info, fetch_custom_games(lock_info))
+    if excluded:
+        print(f"  내전이 아닌 커스텀 {len(excluded)}개 제외")
 
     if not custom_games:
         print("  커스텀 게임이 없거나 매치 히스토리를 가져올 수 없습니다.")
@@ -1732,9 +1826,11 @@ def export_history_mode(out_path=None):
     if not lock_info:
         print("  ❌ 롤 클라이언트를 찾을 수 없습니다. 로그인된 롤 클라이언트(로비 화면)가 켜져 있어야 합니다.")
         return 1
-    games = fetch_custom_games(lock_info)
+    games, excluded = classify_custom_games(lock_info, fetch_custom_games(lock_info))
+    if excluded:
+        print(f"  내전이 아닌 커스텀 {len(excluded)}개 제외")
     if not games:
-        print("  조회 가능한 전적에 커스텀 게임이 없습니다.")
+        print("  10명이 5대5로 한 내전이 없습니다.")
         return 1
     print(f"  커스텀 게임 {len(games)}개 상세 조회 중...")
     path, count = export_history(lock_info, games, out_path)

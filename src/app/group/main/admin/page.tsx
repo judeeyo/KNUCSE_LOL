@@ -11,7 +11,7 @@ import { rowToMatch, type MatchRow } from "@/lib/match-normalize";
 import type { Match } from "@/lib/types";
 
 interface ReportItem {
-  status: "inserted" | "updated" | "skipped" | "candidate" | "invalid";
+  status: "inserted" | "updated" | "merged" | "skipped" | "candidate" | "invalid";
   reason?: string;
   date?: string | null;
   gameId?: string | null;
@@ -22,10 +22,13 @@ interface ImportReport {
   total: number;
   inserted: number;
   updated: number;
+  merged: number;
   skipped: number;
   candidates: number;
   invalid: number;
   membersAdded: number;
+  aliasesAdded: Array<{ from: string; to: string }>;
+  aliasConflicts: Array<{ from: string; to: string }>;
   items: ReportItem[];
   parseErrors: string[];
 }
@@ -38,6 +41,7 @@ interface FilePayload {
 const STATUS_LABEL: Record<ReportItem["status"], string> = {
   inserted: "새로 추가",
   updated: "기존 경기 갱신",
+  merged: "수기 기록에 합침",
   skipped: "이미 있음(건너뜀)",
   candidate: "중복 후보(보류)",
   invalid: "읽을 수 없음",
@@ -46,7 +50,7 @@ const REASON_LABEL: Record<string, string> = {
   "same-id": "같은 id",
   "same-game-id": "같은 gameId",
   "same-content": "10명의 챔피언·KDA가 모두 같음",
-  "same-content-no-game-id": "gameId 없는 기존 기록과 내용이 같음",
+  "same-content-no-game-id": "수기 기록과 10명의 챔피언·KDA 가 같음 → 상세 지표 채움, 닉네임은 기존 표기 유지",
   similar: "날짜가 가깝고 챔피언 8개 이상 일치",
 };
 
@@ -132,7 +136,7 @@ export default function AdminPage() {
       if (fileInput.current) fileInput.current.value = "";
       setNotice({
         kind: "ok",
-        text: `가져오기 완료: 추가 ${res.inserted} · 갱신 ${res.updated} · 건너뜀 ${res.skipped} · 중복 후보 ${res.candidates} · 오류 ${res.invalid}`,
+        text: `가져오기 완료: 추가 ${res.inserted} · 갱신 ${res.updated} · 수기 기록에 합침 ${res.merged} · 건너뜀 ${res.skipped} · 중복 후보 ${res.candidates} · 오류 ${res.invalid}`,
       });
       if (res.candidates > 0) await loadPending();
     });
@@ -217,11 +221,24 @@ export default function AdminPage() {
               <Badge variant="default">{report.dryRun ? "미리보기 (아직 반영 안 됨)" : "반영 완료"}</Badge>
               <Badge variant="win">추가 {report.inserted}</Badge>
               <Badge variant="default">갱신 {report.updated}</Badge>
+              <Badge variant="default">수기 기록에 합침 {report.merged}</Badge>
               <Badge variant="default">건너뜀 {report.skipped}</Badge>
               <Badge variant="ace">중복 후보 {report.candidates}</Badge>
               {report.invalid > 0 && <Badge variant="lose">오류 {report.invalid}</Badge>}
               {report.membersAdded > 0 && <Badge variant="default">새 선수 {report.membersAdded}</Badge>}
             </div>
+            {report.aliasesAdded.length > 0 && (
+              <p className="text-xs text-ink-subtle break-keep">
+                부캐로 자동 등록(통계는 기존 닉네임으로 합산):{" "}
+                {report.aliasesAdded.map((a) => `${a.from} → ${a.to}`).join(", ")}
+              </p>
+            )}
+            {report.aliasConflicts.length > 0 && (
+              <p className="text-xs text-ace break-keep">
+                같은 사람으로 보이지만 이미 따로 기록돼 있어 자동으로 합치지 않음 (선수 정보 → 아이디 통합에서 직접 합치세요):{" "}
+                {report.aliasConflicts.map((a) => `${a.from} → ${a.to}`).join(", ")}
+              </p>
+            )}
             {report.parseErrors.length > 0 && (
               <ul className="text-xs text-lose list-disc pl-4 break-words">
                 {report.parseErrors.map((e, i) => <li key={i}>{e}</li>)}
@@ -255,7 +272,7 @@ export default function AdminPage() {
               </div>
             )}
             {report.dryRun && report.total > 0 && (
-              <Button size="sm" onClick={applyImport} disabled={Boolean(busy) || report.inserted + report.updated + report.candidates + report.membersAdded === 0}>
+              <Button size="sm" onClick={applyImport} disabled={Boolean(busy) || report.inserted + report.updated + report.merged + report.candidates + report.membersAdded === 0}>
                 <Upload size={13} /> {busy === "import" ? "반영 중..." : "DB에 반영"}
               </Button>
             )}

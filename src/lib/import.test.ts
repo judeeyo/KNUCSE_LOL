@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseImportPayload, parseImportText, parseCsv, validateIncoming, type IncomingMatch } from "./import-parse";
-import { decideIngest, type ExistingMatch } from "./ingest-plan";
+import { decideIngest, keepExistingNicknames, type ExistingMatch } from "./ingest-plan";
 import { detectMissing, matchFingerprint, normalizePlayers, rowToMatch, kstDate } from "./match-normalize";
 import { buildPlayerStats, buildChampionStats, buildRadarStats, computeAwards } from "./stats";
 import type { Group } from "./types";
@@ -208,15 +208,30 @@ describe("중복 판정", () => {
     expect(db).toHaveLength(1);
   });
 
-  it("gameId 없는 수기 기록과 내용이 같은 수집 경기는 자동으로 합치지 않고 중복 후보로 보류한다", () => {
+  it("gameId 없는 수기 기록과 10명의 챔피언·KDA 가 같으면 자동으로 합친다", () => {
     const d = decideIngest(existing, inc(asCollector(legacyRows[7], 5555)));
-    expect(d).toEqual({ action: "candidate", existingId: legacyRows[7].id, reason: "same-content-no-game-id" });
+    expect(d).toEqual({ action: "merge", existingId: legacyRows[7].id });
+  });
+
+  it("이미 다른 gameId 가 붙은 기록과는 내용이 같아도 합치지 않는다", () => {
+    const withId: ExistingMatch[] = [{ ...existing[7], game_id: "1111" }];
+    expect(decideIngest(withId, inc(asCollector(legacyRows[7], 2222))).action).not.toBe("merge");
+  });
+
+  it("합칠 때 닉네임은 기존 기록 표기를 유지하고, 바뀐 이름 쌍을 알려 준다", () => {
+    const riot = asCollector(legacyRows[7], 5555).players; // riot-0 ~ riot-9
+    const shuffled = [...riot].reverse(); // 순서가 달라도 챔피언·KDA 로 짝을 찾는다
+    const { players, renames } = keepExistingNicknames(legacyRows[7].players, shuffled);
+    expect(players.map((p) => p.nickname)).toEqual([...legacyRows[7].players].reverse().map((p) => p.nickname));
+    expect(renames).toHaveLength(10);
+    expect(renames[0]).toEqual({ from: "riot-9", to: legacyRows[7].players[9].nickname });
+    expect(players[0].damageDealt).toBe(10009); // 상세 지표는 새 자료 것
   });
 
   it("블루/레드가 뒤바뀌어 기록돼도 같은 경기로 본다", () => {
     const flipped = asCollector(legacyRows[7], 5556);
     flipped.players = flipped.players.map((p) => ({ ...p, team: p.team === "blue" ? "red" : "blue" }));
-    expect(decideIngest(existing, inc(flipped))).toMatchObject({ action: "candidate", existingId: legacyRows[7].id });
+    expect(decideIngest(existing, inc(flipped))).toMatchObject({ action: "merge", existingId: legacyRows[7].id });
   });
 
   it("KDA 가 조금 다르지만 날짜가 가깝고 챔피언이 거의 같으면 '유사' 후보", () => {
@@ -258,5 +273,23 @@ describe("Supabase 주소 정규화", async () => {
     ["/_db", "/_db"],
   ])("%s → %s", (input, expected) => {
     expect(normalizeSupabaseUrl(input)).toBe(expected);
+  });
+});
+
+describe("내전 판별 (수집기 자료)", async () => {
+  const { naejeonViolation } = await import("./import-parse");
+  const base = parseImportPayload(asCollector(legacyRows[0], 1), "history").matches[0];
+  it("5대5 10명은 통과", () => expect(naejeonViolation(base)).toBeNull());
+  it("1대1 커스텀은 거부", () => {
+    const solo = { ...base, players: [base.players[0], base.players[5]] };
+    expect(naejeonViolation(solo)).toContain("2명");
+  });
+  it("10명이어도 6대4 는 거부", () => {
+    const uneven = { ...base, players: base.players.map((p, i) => (i === 5 ? { ...p, team: "blue" as const } : p)) };
+    expect(naejeonViolation(uneven)).toContain("6대4");
+  });
+  it("수동 등록·백업 복원에는 적용하지 않음", () => {
+    expect(naejeonViolation({ ...base, source: "manual", players: base.players.slice(0, 4) })).toBeNull();
+    expect(naejeonViolation({ ...base, source: "backup-import", players: base.players.slice(0, 4) })).toBeNull();
   });
 });

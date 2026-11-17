@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { v4 as uuid } from "uuid";
 import { calculateMvpScores } from "@/lib/mvp";
 import { GROUP_NAME, type MatchRow } from "@/lib/match-normalize";
+import { keepExistingNicknames } from "@/lib/ingest-plan";
 import type { Lane, PlayerStat } from "@/lib/types";
 
 /** Supabase 오류를 삼키지 않고 예외로 올린다 (기존 코드는 실패해도 조용히 넘어갔음) */
@@ -211,9 +212,14 @@ export async function resolvePending(
   }
   // merge: 기존 기록(수기 등)의 id 는 유지하고 내용을 새 수집 데이터로 교체
   if (!row.duplicate_of) throw new Error("합칠 대상이 지정돼 있지 않습니다");
-  const target = must(await sb.from("matches").select("id").eq("id", row.duplicate_of).maybeSingle(), "원본 경기 조회");
+  const target = must(await sb.from("matches").select("id, players").eq("id", row.duplicate_of).maybeSingle(), "원본 경기 조회");
   if (!target) throw new Error("합칠 대상 경기가 이미 삭제됐습니다. '별개 경기로 등록'을 선택하세요");
-  const players = (row.players as Array<Record<string, unknown>>).map((p) => ({ ...p, matchId: row.duplicate_of }));
+  // 닉네임은 기존 기록 표기를 유지 (챔피언·KDA 가 같은 참가자끼리 짝지음)
+  const { players: kept } = keepExistingNicknames(
+    (target.players as Array<Record<string, unknown>>) || [],
+    row.players as Array<Record<string, unknown>>
+  );
+  const players = kept.map((p) => ({ ...p, matchId: row.duplicate_of }));
   // game_id 는 유니크이므로 보류 행을 먼저 지운 뒤 대상에 옮긴다
   must(await sb.from("matches").delete().eq("id", id), "보류 경기 삭제");
   const res = await sb

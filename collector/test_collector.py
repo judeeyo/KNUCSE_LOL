@@ -77,6 +77,7 @@ class CollectorTest(unittest.TestCase):
         cls.server.shutdown()
 
     def setUp(self):
+        self.solo_games, self.one_v_one, self.aram_games = set(), set(), set()
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["NAEJEON_DATA_DIR"] = self.tmp.name
         FakeSite.mode = "ok"
@@ -200,8 +201,23 @@ class CollectorTest(unittest.TestCase):
                 return {"games": {"games": pages[beg:end]}}
             if endpoint.startswith("/lol-match-history/v1/games/"):
                 gid = int(endpoint.rsplit("/", 1)[1])
+                if gid in self.solo_games:  # 나 + 봇 9명
+                    return {
+                        "gameId": gid, "gameCreation": 1780000000000, "gameDuration": 900, "mapId": 11,
+                        "participantIdentities": [{"participantId": 1, "player": {"gameName": "나", "puuid": "aB3_" + "x" * 74}}]
+                        + [{"participantId": i + 1, "player": {"gameName": f"Bot{i}", "puuid": "00000000-0000-0000-0000-000000000000", "summonerId": 0}} for i in range(1, 10)],
+                        "participants": [{"participantId": i + 1, "teamId": 100 if i < 5 else 200, "championId": 103, "stats": {}} for i in range(10)],
+                    }
+                if gid in self.one_v_one:
+                    return {
+                        "gameId": gid, "gameCreation": 1780000000000, "gameDuration": 600, "mapId": 11,
+                        "participantIdentities": [{"participantId": i + 1, "player": {"gameName": f"n{i}", "puuid": f"p{i}" + "y" * 70}} for i in range(2)],
+                        "participants": [{"participantId": i + 1, "teamId": 100 if i == 0 else 200, "championId": 103, "stats": {}} for i in range(2)],
+                    }
+                if gid in self.aram_games:
+                    return {"gameId": gid, "mapId": 12, "participants": [], "participantIdentities": []}
                 return {
-                    "gameId": gid, "gameCreation": 1780000000000 + gid, "gameDuration": 1805, "gameMode": "CLASSIC",
+                    "gameId": gid, "gameCreation": 1780000000000 + gid, "gameDuration": 1805, "gameMode": "CLASSIC", "mapId": 11,
                     "teams": [{"teamId": 100, "bans": [{"championId": 1, "pickTurn": 1}]}, {"teamId": 200, "bans": []}],
                     "participantIdentities": [{"participantId": i + 1, "player": {"gameName": f"n{i}"}} for i in range(10)],
                     "participants": [{
@@ -246,6 +262,32 @@ class CollectorTest(unittest.TestCase):
         self.assertIn("current-summoner: HTTP 200 OK", report)
         self.assertIn("[0~200]: HTTP 500", report)
         self.assertIn("[0~20]: HTTP 200 20경기", report)
+
+    def test_only_5v5_human_games_count_as_naejeon(self):
+        self.solo_games, self.one_v_one, self.aram_games = {2}, {3}, {4}
+        games = [{"gameId": i, "queueId": 0} for i in (1, 2, 3, 4, 5)]
+        self._fake_lcu(games)
+        naejeon, excluded = collector.classify_custom_games({}, collector.fetch_custom_games({}))
+        self.assertEqual([g["gameId"] for g in naejeon], [1, 5])
+        reasons = {g["gameId"]: r for g, r in excluded}
+        self.assertEqual(reasons[2], "사람 1명 + 봇 9명")
+        self.assertEqual(reasons[3], "2명 게임")
+        self.assertTrue(reasons[4].startswith("협곡이 아님"))
+        # 저장할 때도 내전만 들어가고, 이미 받아 둔 상세를 재사용한다
+        path, count = collector.export_history({}, naejeon + [g for g, _ in excluded])
+        self.assertEqual(count, 2)
+
+    def test_realtime_skips_solo_custom(self):
+        collector.set_upload_token(TOKEN)
+        eog = {"gameId": 77, "gameLength": 600, "teams": [
+            {"isWinningTeam": True, "players": [{"summonerName": "나", "championName": "Ahri", "stats": {}}]},
+            {"isWinningTeam": False, "players": [{"summonerName": f"Bot{i}", "botPlayer": True, "championName": "Annie", "stats": {}} for i in range(5)]},
+        ]}
+        collector.get_eog_stats = lambda lock: eog
+        collector.is_custom_game = lambda lock: True
+        self.assertEqual(collector.handle_end_of_game({}, None), 77)
+        self.assertEqual(FakeSite.received, [])
+        self.assertTrue(any("내전이 아니므로" in l for l in self.logs))
 
     def test_export_history_writes_importable_json_without_uploading(self):
         collector.set_upload_token(TOKEN)

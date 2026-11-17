@@ -339,6 +339,21 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((f) => f !== ""));
 }
 
+/**
+ * 수집기(실시간·과거 전적)에서 온 경기가 "내전"인지: 5대5 로 10명이 참가한 경기만 인정한다.
+ * 혼자 한 사용자 설정 게임(봇전·1대1 등)이 섞여 들어오는 것을 막는다.
+ * 수동 등록·수기 기록·백업 복원은 사람이 고른 자료이므로 이 기준을 적용하지 않는다.
+ */
+export function naejeonViolation(m: IncomingMatch): string | null {
+  if (m.source !== "collector" && m.source !== "history") return null;
+  const blue = m.players.filter((p) => p.team === "blue").length;
+  const red = m.players.length - blue;
+  if (m.players.length !== 10 || blue !== 5 || red !== 5) {
+    return `내전이 아님 (${m.players.length}명, ${blue}대${red})`;
+  }
+  return null;
+}
+
 /** 가져오기 전 최소 검증. 문제가 있으면 사유 문자열, 없으면 null */
 export function validateIncoming(m: IncomingMatch): string | null {
   if (m.players.length < 2) return "참가자가 2명 미만";

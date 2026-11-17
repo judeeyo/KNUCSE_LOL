@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
       status: item.status,
       matchId: item.matchId ?? item.existingId,
       updated: item.status === "updated",
+      merged: item.status === "merged", // 수기 기록과 같은 경기 → 기존 기록에 자동으로 합침
       duplicate: item.status === "skipped",
       pendingReview: item.status === "candidate",
       players: inc.players.length,

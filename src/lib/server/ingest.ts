@@ -6,12 +6,12 @@ import { normalizeChampionName } from "@/lib/champions";
 import { normalizeNickname } from "@/lib/nicknames";
 import { assignLanesByOrder } from "@/lib/lanes";
 import { GROUP_NAME } from "@/lib/match-normalize";
-import { decideIngest, type ExistingMatch, type IngestDecision } from "@/lib/ingest-plan";
-import { validateIncoming, type IncomingMatch, type IncomingMember } from "@/lib/import-parse";
+import { decideIngest, keepExistingNicknames, type ExistingMatch, type IngestDecision } from "@/lib/ingest-plan";
+import { naejeonViolation, validateIncoming, type IncomingMatch, type IncomingMember } from "@/lib/import-parse";
 import type { PlayerStat } from "@/lib/types";
 
 export interface IngestItemResult {
-  status: "inserted" | "updated" | "skipped" | "candidate" | "invalid";
+  status: "inserted" | "updated" | "merged" | "skipped" | "candidate" | "invalid";
   matchId?: string;
   existingId?: string;
   reason?: string;
@@ -25,10 +25,16 @@ export interface IngestReport {
   total: number;
   inserted: number;
   updated: number;
+  /** 수기 기록에 자동으로 합친 경기 수 */
+  merged: number;
   skipped: number;
   candidates: number;
   invalid: number;
   membersAdded: number;
+  /** 자동으로 부캐 등록한 닉네임 (Riot 닉네임 → 기존 표기) */
+  aliasesAdded: Array<{ from: string; to: string }>;
+  /** 별도 선수로 이미 있어 자동 통합하지 않은 닉네임 — 선수 정보 탭에서 직접 통합 */
+  aliasConflicts: Array<{ from: string; to: string }>;
   items: IngestItemResult[];
 }
 
@@ -36,6 +42,7 @@ interface Snapshot {
   existing: ExistingMatch[];
   aliasMap: Map<string, string>;
   memberSet: Set<string>;
+  memberAliases: Map<string, string[]>;
 }
 
 async function loadSnapshot(sb: SupabaseClient): Promise<Snapshot> {
@@ -47,11 +54,13 @@ async function loadSnapshot(sb: SupabaseClient): Promise<Snapshot> {
   if (mem.error) throw new Error(`members 조회 실패: ${mem.error.message}`);
   const aliasMap = new Map<string, string>();
   const memberSet = new Set<string>();
+  const memberAliases = new Map<string, string[]>();
   for (const row of mem.data || []) {
     memberSet.add(row.nickname);
+    memberAliases.set(row.nickname, [...((row.aliases as string[]) || [])]);
     for (const a of (row.aliases as string[]) || []) aliasMap.set(a, row.nickname);
   }
-  return { existing: (m.data || []) as ExistingMatch[], aliasMap, memberSet };
+  return { existing: (m.data || []) as ExistingMatch[], aliasMap, memberSet, memberAliases };
 }
 
 /** 저장용 참가자 배열 생성 (닉네임·챔피언 정규화, 부캐→본캐, 라인 배정, MVP 점수) */
@@ -122,7 +131,23 @@ export async function ingestMatches(
   const dryRun = Boolean(opts.dryRun);
   const snap = await loadSnapshot(sb);
   const report: IngestReport = {
-    dryRun, total: incoming.length, inserted: 0, updated: 0, skipped: 0, candidates: 0, invalid: 0, membersAdded: 0, items: [],
+    dryRun, total: incoming.length, inserted: 0, updated: 0, merged: 0, skipped: 0, candidates: 0, invalid: 0, membersAdded: 0,
+    aliasesAdded: [], aliasConflicts: [], items: [],
+  };
+  // 이번 가져오기에서 새로 생긴 부캐 (기존 표기 → 추가할 Riot 닉네임들)
+  const aliasAdds = new Map<string, Set<string>>();
+  const noteRenames = (renames: Array<{ from: string; to: string }>) => {
+    for (const r of renames) {
+      if (snap.aliasMap.get(r.from) === r.to) continue; // 이미 부캐로 등록됨
+      if (snap.memberSet.has(r.from) || snap.aliasMap.has(r.from)) {
+        // 같은 닉네임이 이미 따로 집계되고 있음 → 자동으로 합치지 않고 알려 준다
+        if (!report.aliasConflicts.some((c) => c.from === r.from && c.to === r.to)) report.aliasConflicts.push(r);
+        continue;
+      }
+      snap.aliasMap.set(r.from, r.to);
+      aliasAdds.set(r.to, (aliasAdds.get(r.to) || new Set()).add(r.from));
+      report.aliasesAdded.push(r);
+    }
   };
 
   // 멤버(백업 복원): 없는 닉네임만 추가 — 기존 프로필은 덮어쓰지 않는다
@@ -145,7 +170,7 @@ export async function ingestMatches(
 
   for (const inc of incoming) {
     const base = { date: inc.createdAt, gameId: inc.gameId, summary: summarize(inc) };
-    const invalid = validateIncoming(inc);
+    const invalid = validateIncoming(inc) ?? naejeonViolation(inc);
     if (invalid) {
       report.invalid++;
       report.items.push({ status: "invalid", reason: invalid, ...base });
@@ -159,8 +184,18 @@ export async function ingestMatches(
       continue;
     }
 
-    const matchId = decision.action === "update" ? decision.existingId : inc.id || uuid();
-    const players = buildPlayers(inc, matchId, snap.aliasMap);
+    const target = decision.action === "update" || decision.action === "merge" ? decision.existingId : null;
+    const matchId = target || inc.id || uuid();
+    let players = buildPlayers(inc, matchId, snap.aliasMap);
+    if (target) {
+      // 이미 있는 경기에 덮어쓸 때는 닉네임을 기존 기록 그대로 유지한다 (수기 표기·관리자가 고친 이름 보존)
+      const existingRow = snap.existing.find((x) => x.id === target);
+      if (existingRow) {
+        const kept = keepExistingNicknames(existingRow.players, players);
+        players = kept.players;
+        noteRenames(kept.renames);
+      }
+    }
     const row: Record<string, unknown> = {
       group_name: GROUP_NAME,
       game_duration: inc.gameDuration,
@@ -175,16 +210,25 @@ export async function ingestMatches(
     if (inc.gameId) row.game_id = inc.gameId;
     if (inc.createdAt) row.created_at = inc.createdAt;
 
-    if (decision.action === "update") {
+    if (decision.action === "update" || decision.action === "merge") {
+      if (!inc.gameDuration) delete row.game_duration;
       if (!dryRun) {
         // 갱신 시 검토 상태(보류 여부)는 건드리지 않는다
         const { error } = await sb.from("matches").update(row).eq("id", matchId);
         if (error) throw new Error(`경기 갱신 실패: ${error.message}`);
       }
       const e = snap.existing.find((x) => x.id === matchId);
-      if (e) e.players = players as unknown as ExistingMatch["players"];
-      report.updated++;
-      report.items.push({ status: "updated", matchId, ...base });
+      if (e) {
+        e.players = players as unknown as ExistingMatch["players"];
+        if (inc.gameId) e.game_id = inc.gameId;
+      }
+      if (decision.action === "merge") {
+        report.merged++;
+        report.items.push({ status: "merged", matchId, existingId: matchId, reason: "same-content-no-game-id", ...base });
+      } else {
+        report.updated++;
+        report.items.push({ status: "updated", matchId, ...base });
+      }
     } else {
       const candidate = decision.action === "candidate";
       row.id = matchId;
@@ -216,6 +260,19 @@ export async function ingestMatches(
       }
     }
   }
+
+  // 자동 부캐 등록: 기존 표기(본캐)의 aliases 에 Riot 닉네임 추가
+  if (!dryRun) {
+    for (const [main, adds] of aliasAdds) {
+      const aliases = [...(snap.memberAliases.get(main) || [])];
+      for (const a of adds) if (!aliases.includes(a)) aliases.push(a);
+      const { error } = await sb.from("members").upsert({ nickname: main, aliases }, { onConflict: "nickname" });
+      if (error) throw new Error(`부캐 등록 실패: ${error.message}`);
+      snap.memberSet.add(main);
+    }
+  }
+  // 본캐로 바뀐 닉네임은 새 선수로 등록하지 않는다
+  for (const r of report.aliasesAdded) newMembers.delete(r.from);
 
   if (newMembers.size > 0) {
     report.membersAdded = newMembers.size;

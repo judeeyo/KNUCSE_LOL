@@ -189,7 +189,7 @@ export default function MainGroupPage() {
       </div>
 
       {/* Tab Content */}
-      {tab === "players" && <PlayerStatsTab playerStats={playerStats} awards={awards} />}
+      {tab === "players" && <PlayerStatsTab playerStats={playerStats} awards={awards} matchCount={group.matches.length} />}
       {tab === "champions" && <ChampionStatsTab group={group} />}
       {tab === "lanes" && <LaneRankingTab group={group} />}
       {tab === "sides" && <TeamSideTab group={group} />}

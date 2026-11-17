@@ -162,5 +162,27 @@ r = await admin("setExcluded", { matchId: victim.id, reason: null });
 assert.equal((await state()).matches.find((m) => m.id === victim.id).excluded_reason, null);
 step("없던 경기 표시 → 유지 → 해제");
 
+// 10. 닉네임을 바꾼 사람: 같은 계정 ID(puuid)면 예전 닉네임으로 이어 붙인다
+const withIds = (gameId, rename) => {
+  const m = detailed(legacy[0], gameId);
+  m.gameCreation = Date.parse("2026-11-20T12:00:00Z") + gameId;
+  m.players = m.players.map((p, i) => ({
+    ...p, champion: ["Garen", "Lux", "Sona", "Vayne", "Jax", "Ahri", "Zed", "Lulu", "Jinx", "Shen"][i], kills: i + 2,
+    nickname: i === 2 && rename ? "새닉네임#KR1" : `계정${i}`, puuid: `puuid-${i}`, soloTier: i === 2 ? "골드 2" : undefined,
+  }));
+  return m;
+};
+r = await upload(withIds(9100001, false));
+assert.equal(r.body.status, "inserted");
+r = await upload(withIds(9100002, true));
+assert.equal(r.body.status, "inserted");
+s = await state();
+const renamedGame = s.matches.find((m) => m.game_id === "9100002");
+assert.equal(renamedGame.players[2].nickname, "계정2", "바뀐 닉네임은 예전 닉네임으로 기록");
+assert.equal(renamedGame.players[2].soloTier, "골드 2");
+assert.ok(s.members.find((m) => m.nickname === "계정2").aliases.includes("새닉네임#KR1"));
+assert.equal(s.members.some((m) => m.nickname === "새닉네임#KR1"), false);
+step("닉네임 변경 → 같은 puuid 로 예전 닉네임에 이어 붙임 + 부캐 등록, 솔랭 티어 기록");
+
 await fetch(MOCK + "/__mock/reset", { method: "POST" });
 console.log("OK: API 흐름 검증 완료");

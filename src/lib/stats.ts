@@ -843,7 +843,7 @@ export function parseTierScore(tier: string | undefined | null): number | null {
 
 /** 밸런서 점수 구성 (화면에 근거를 보여 주기 위해 함께 반환) */
 export interface BalancerScoreParts {
-  tierScore: number; // 0~10, 티어 미입력이면 입력된 선수들의 평균
+  tierScore: number | null; // 0~10, 티어 미입력이면 null (점수에 쓰지 않음)
   tierKnown: boolean;
   perfScore: number; // 0~10, 판수가 적으면 평균(5)으로 수렴
   perfWeight: number; // 0~0.65, 판수가 많을수록 전적 비중↑
@@ -854,23 +854,20 @@ export function getBalancerPlayers(
   tierOverrides: Record<string, string>,
   lanePrefs: Record<string, Lane[]> = {}
 ): BalancerPlayer[] {
-  // 티어 미입력자는 "입력된 선수들의 평균 티어"로 가정 (아무도 없으면 플래티넘 4 = 5점)
-  const known = playerStats.map((p) => parseTierScore(tierOverrides[p.nickname])).filter((v): v is number => v !== null);
-  const defaultTier = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 5;
-
   return playerStats.map((p) => {
     const tier = tierOverrides[p.nickname] || "";
     const parsed = parseTierScore(tier);
-    const tierScore = parsed ?? defaultTier;
     // 내전 성적: 종합점수(0~100 백분위)에서 표본 신뢰도 계수를 걷어낸 값을 쓰고,
     // 판수가 적을수록 0 이 아니라 평균(5)으로 수렴시킨다 — 처음 온 사람을 "약한 사람"으로 취급하지 않도록.
     const confidence = p.gamesPlayed > 0 ? Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 3)) : 0;
     const base = confidence > 0 ? p.totalScore / confidence / 10 : 5;
     const shrink = p.gamesPlayed / (p.gamesPlayed + 5);
     const perfScore = 5 + (base - 5) * shrink;
-    // 판수가 쌓일수록 티어보다 실제 전적을 더 신뢰 (최대 65%)
-    const wPerf = 0.65 * Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 5));
-    const score = tierScore * (1 - wPerf) + perfScore * wPerf;
+    // 티어가 있으면: 판수가 쌓일수록 티어보다 실제 전적을 더 신뢰 (최대 65%).
+    // 티어가 없으면: 아는 정보가 내전 전적뿐이므로 전적만 쓴다 (판수가 적으면 위에서 평균으로 수렴).
+    // (솔랭을 거의 안 하는 그룹이라 가짜 평균 티어를 섞으면 점수 차이만 뭉개진다)
+    const wPerf = parsed === null ? 1 : 0.65 * Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 5));
+    const score = parsed === null ? perfScore : parsed * (1 - wPerf) + perfScore * wPerf;
 
     return {
       nickname: p.nickname,
@@ -881,7 +878,7 @@ export function getBalancerPlayers(
       avgKda: p.avgKda,
       preferredLanes: lanePrefs[p.nickname],
       parts: {
-        tierScore: Math.round(tierScore * 100) / 100,
+        tierScore: parsed === null ? null : Math.round(parsed * 100) / 100,
         tierKnown: parsed !== null,
         perfScore: Math.round(perfScore * 100) / 100,
         perfWeight: Math.round(wPerf * 100) / 100,

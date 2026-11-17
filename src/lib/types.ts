@@ -77,5 +77,9 @@ export interface PlayerStat {
   noDamage?: boolean;
   noDamageTaken?: boolean;
   noVision?: boolean;
+  // 수집기가 기록하는 계정 정보 (예전 기록에는 없음)
+  puuid?: string;
+  tagLine?: string;
+  soloTier?: string; // 업로드 시점 솔랭 티어 — 기록용, 팀 밸런스에는 자동으로 쓰지 않음
 }
 

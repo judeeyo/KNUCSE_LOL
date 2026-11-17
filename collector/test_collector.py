@@ -193,6 +193,13 @@ class CollectorTest(unittest.TestCase):
             return (200, data, "") if data is not None else (404, None, "")
 
         def fake(lock_info, endpoint):
+            if endpoint.startswith("/lol-ranked/v1/ranked-stats/"):
+                puuid = endpoint.rsplit("/", 1)[1]
+                if puuid == "p-0":
+                    return {"queueMap": {"RANKED_SOLO_5x5": {"tier": "DIAMOND", "division": "II"}}}
+                if puuid == "p-1":
+                    return {"queueMap": {"RANKED_SOLO_5x5": {"tier": "MASTER", "division": "NA"}}}
+                return {"queueMap": {"RANKED_SOLO_5x5": {"tier": "", "division": "NA"}}}
             if endpoint == "/lol-summoner/v1/current-summoner":
                 return {"puuid": "aB3_" + "x" * 74, "gameName": "테스트 유저"}
             if "/matches?" in endpoint:
@@ -219,7 +226,7 @@ class CollectorTest(unittest.TestCase):
                 return {
                     "gameId": gid, "gameCreation": 1780000000000 + gid, "gameDuration": 1805, "gameMode": "CLASSIC", "mapId": 11,
                     "teams": [{"teamId": 100, "bans": [{"championId": 1, "pickTurn": 1}]}, {"teamId": 200, "bans": []}],
-                    "participantIdentities": [{"participantId": i + 1, "player": {"gameName": f"n{i}"}} for i in range(10)],
+                    "participantIdentities": [{"participantId": i + 1, "player": {"gameName": f"n{i}", "puuid": f"p-{i}", "tagLine": "KR1"}} for i in range(10)],
                     "participants": [{
                         "participantId": i + 1, "teamId": 100 if i < 5 else 200, "championId": 103,
                         "timeline": {"lane": "MIDDLE", "role": "SOLO"},
@@ -306,6 +313,20 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(m["gameDuration"], "30:05")
         self.assertEqual(m["bans"], {"blue": ["Annie"], "red": []})
         self.assertEqual(self.files("backups"), ["match_71.json", "match_72.json"])
+
+    def test_history_records_puuid_tag_and_current_solo_tier(self):
+        self._fake_lcu([{"gameId": 91, "queueId": 0}])
+        match, _ = collector.build_history_match({}, {"gameId": 91})
+        p0, p1, p2 = match["players"][:3]
+        self.assertEqual((p0["puuid"], p0["tagLine"], p0["soloTier"]), ("p-0", "KR1", "다이아 2"))
+        self.assertEqual(p1["soloTier"], "마스터")
+        self.assertNotIn("soloTier", p2)  # 언랭은 기록하지 않음
+
+    def test_solo_tier_parsing(self):
+        f = collector.solo_tier_from_ranked
+        self.assertEqual(f({"queues": [{"queueType": "RANKED_SOLO_5x5", "tier": "GOLD", "division": "IV"}]}), "골드 4")
+        self.assertIsNone(f({"queueMap": {}}))
+        self.assertIsNone(f(None))
 
     def test_upload_history_game_reports_duplicates(self):
         collector.set_upload_token(TOKEN)

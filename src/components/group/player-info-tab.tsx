@@ -6,6 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { updateMemberProfile, mergeAliases, renameMember, deleteMember } from "@/lib/store";
+import { AdminCancelledError } from "@/lib/admin-client";
+
+/** 관리자 작업 실패 안내 (로그인 창을 취소한 경우는 조용히 넘어감) */
+function reportError(what: string, err: unknown) {
+  if (err instanceof AdminCancelledError) return;
+  alert(`${what} 실패: ` + (err instanceof Error ? err.message : "알 수 없는 오류"));
+}
 import { ChampionIcon } from "@/components/ui/champion-icon";
 import { RadarChart } from "@/components/ui/radar-chart";
 import { buildRadarStats, derivePreferredLanes } from "@/lib/stats";
@@ -84,13 +91,20 @@ export function PlayerInfoTab({
     setAutoLanes(true);
     const statByNick = new Map(playerStats.map((p) => [p.nickname, p]));
     let updated = 0;
-    for (const m of group.members) {
-      const st = statByNick.get(m.nickname);
-      if (!st) continue;
-      const lanes = derivePreferredLanes(st.laneStats);
-      if (lanes.length === 0) continue;
-      await updateMemberProfile(m.nickname, { preferredLanes: lanes });
-      updated++;
+    try {
+      for (const m of group.members) {
+        const st = statByNick.get(m.nickname);
+        if (!st) continue;
+        const lanes = derivePreferredLanes(st.laneStats);
+        if (lanes.length === 0) continue;
+        await updateMemberProfile(m.nickname, { preferredLanes: lanes });
+        updated++;
+      }
+    } catch (err) {
+      setAutoLanes(false);
+      reportError("선호 포지션 설정", err);
+      if (updated > 0) onUpdate();
+      return;
     }
     setAutoLanes(false);
     onUpdate();
@@ -109,17 +123,23 @@ export function PlayerInfoTab({
     if (!editing) return;
     setSaving(true);
 
-    // 닉네임 변경 시
-    if (editNewNickname && editNewNickname !== editing) {
-      await renameMember(editing, editNewNickname);
-    }
+    try {
+      // 닉네임 변경 시
+      if (editNewNickname && editNewNickname !== editing) {
+        await renameMember(editing, editNewNickname);
+      }
 
-    const targetNickname = editNewNickname || editing;
-    await updateMemberProfile(targetNickname, {
-      tier: editTier,
-      preferredLanes: editLanes,
-      realName: editRealName,
-    });
+      const targetNickname = editNewNickname || editing;
+      await updateMemberProfile(targetNickname, {
+        tier: editTier,
+        preferredLanes: editLanes,
+        realName: editRealName,
+      });
+    } catch (err) {
+      setSaving(false);
+      reportError("저장", err);
+      return;
+    }
     setEditing(null);
     setSaving(false);
     onUpdate();
@@ -127,7 +147,12 @@ export function PlayerInfoTab({
 
   const handleDelete = async (nickname: string) => {
     if (!confirm(`"${nickname}" 선수를 삭제하시겠습니까? 매치 기록에서 해당 닉네임이 [삭제]로 표시됩니다.`)) return;
-    await deleteMember(nickname);
+    try {
+      await deleteMember(nickname);
+    } catch (err) {
+      reportError("삭제", err);
+      return;
+    }
     onUpdate();
   };
 
@@ -142,7 +167,13 @@ export function PlayerInfoTab({
 
   const handleMerge = async () => {
     if (!mergeTarget || !mergeAlias) return;
-    const renamed = await mergeAliases(mergeTarget, mergeAlias);
+    let renamed: number;
+    try {
+      renamed = await mergeAliases(mergeTarget, mergeAlias);
+    } catch (err) {
+      reportError("아이디 통합", err);
+      return;
+    }
     setShowMerge(false);
     setMergeTarget("");
     setMergeAlias("");

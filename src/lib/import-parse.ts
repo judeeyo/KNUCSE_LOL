@@ -34,6 +34,11 @@ export interface IncomingPlayer {
   firstBlood?: boolean;
   largestMultiKill?: number | null;
   level?: number;
+  /** Riot 계정 고유 ID — 닉네임이 바뀌어도 같은 사람으로 잇는 데 쓴다 */
+  puuid?: string;
+  tagLine?: string;
+  /** 업로드 시점의 솔랭 티어 (예: "다이아 2"). 기록만 하고 팀 밸런스에는 자동으로 쓰지 않음 */
+  soloTier?: string;
 }
 
 export interface IncomingMatch {
@@ -124,6 +129,9 @@ function parsePlayer(p: Obj, index: number, total: number): IncomingPlayer {
   if (p.firstBlood !== undefined) out.firstBlood = Boolean(p.firstBlood);
   if (p.largestMultiKill !== undefined) out.largestMultiKill = numOrNull(p.largestMultiKill);
   if (p.level !== undefined) out.level = num(p.level);
+  for (const k of ["puuid", "tagLine", "soloTier"] as const) {
+    if (typeof p[k] === "string" && (p[k] as string).trim()) out[k] = (p[k] as string).trim().slice(0, 100);
+  }
   return out;
 }
 

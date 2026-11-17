@@ -478,11 +478,14 @@ describe("팀 밸런스 보강", async () => {
     expect(n.parts?.tierKnown).toBe(false);
   });
 
-  it("티어 미입력자는 입력된 선수들의 평균 티어", () => {
-    const stats = [{ nickname: "x", gamesPlayed: 0, totalScore: 0 }, { nickname: "y", gamesPlayed: 0, totalScore: 0 }] as PlayerStats[];
+  it("티어 미입력자는 내전 전적만으로, 입력자는 티어와 섞어서", () => {
+    const stats = [{ nickname: "x", gamesPlayed: 10, totalScore: 50 }, { nickname: "y", gamesPlayed: 10, totalScore: 50 }] as PlayerStats[];
     const [x, y] = getBalancerPlayers(stats, { x: "다이아 4" });
     expect(x.parts?.tierScore).toBe(7);
-    expect(y.parts?.tierScore).toBe(7);
+    expect(y.parts?.tierScore).toBeNull();
+    expect(y.parts?.perfWeight).toBe(1);
+    expect(y.score).toBe(y.parts?.perfScore);
+    expect(x.score).toBeGreaterThan(y.score);
   });
 
   it("여러 조합을 균형 순으로, 블루/레드만 바뀐 중복 없이", () => {

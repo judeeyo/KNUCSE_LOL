@@ -45,8 +45,8 @@ function getTierColor(tier?: string): string {
 function scoreTitle(p: BalancerPlayer): string {
   const parts = p.parts;
   if (!parts) return "";
-  const tier = parts.tierKnown ? `티어 ${parts.tierScore}` : `티어 미입력 → 평균 ${parts.tierScore}`;
-  return `${tier} × ${Math.round((1 - parts.perfWeight) * 100)}% + 내전 성적 ${parts.perfScore} × ${Math.round(parts.perfWeight * 100)}%`;
+  if (!parts.tierKnown) return `내전 성적 ${parts.perfScore} (${p.gamesPlayed}판, 판수가 적을수록 평균 5점 쪽으로 보정)`;
+  return `티어 ${parts.tierScore} × ${Math.round((1 - parts.perfWeight) * 100)}% + 내전 성적 ${parts.perfScore} × ${Math.round(parts.perfWeight * 100)}%`;
 }
 
 type Pair = { a: string; b: string; kind: "together" | "apart" };
@@ -101,7 +101,9 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
   );
 
   const selectedPlayers = allPlayers.filter((p) => selected.has(p.nickname));
-  const missingTier = selectedPlayers.filter((p) => !p.parts?.tierKnown);
+  // 티어를 일부만 입력한 경우에만 안내 (아무도 입력하지 않았으면 전원 내전 전적만으로 공평하게 계산)
+  const someTier = selectedPlayers.some((p) => p.parts?.tierKnown);
+  const missingTier = someTier ? selectedPlayers.filter((p) => !p.parts?.tierKnown) : [];
   const activePairs = pairs.filter((p) => selected.has(p.a) && selected.has(p.b));
 
   const togglePlayer = (nickname: string) => {
@@ -154,7 +156,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
       <Card className="flex items-start gap-3 py-3 px-4">
         <Users size={18} className="text-primary shrink-0 mt-0.5" />
         <p className="text-sm text-ink-muted break-keep">
-          참여할 플레이어를 고르면 솔랭 티어와 내전 전적을 합친 점수로 가능한 편성을 모두 비교해 가장 균형 잡힌 팀을 추천하고,
+          참여할 플레이어를 고르면 내전 전적(솔랭 티어를 입력한 사람은 티어도 함께)으로 매긴 점수로 가능한 편성을 모두 비교해 가장 균형 잡힌 팀을 추천하고,
           10명일 때는 선호 포지션까지 고려해 라인을 배정합니다. 선호 포지션은 설정값이 없으면{" "}
           <span className="text-primary">전적(라인별 판수)</span>에서 자동으로 가져옵니다. 점수에 마우스를 올리면 계산 근거가 보입니다.
         </p>
@@ -311,9 +313,9 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
         <div className="flex items-start gap-2 rounded-lg border border-mvp/30 bg-mvp/5 px-3 py-2.5 text-xs text-ink-muted break-keep">
           <AlertTriangle size={14} className="text-mvp shrink-0 mt-0.5" />
           <span>
-            선택한 {selected.size}명 중 {missingTier.length}명은 솔랭 티어가 없어 평균 티어로 계산합니다
+            선택한 {selected.size}명 중 {missingTier.length}명만 솔랭 티어가 없어 내전 전적만으로 계산합니다
             ({missingTier.slice(0, 5).map((p) => p.nickname).join(", ")}{missingTier.length > 5 ? " 외" : ""}).
-            내전 기록이 적을 때는 티어가 가장 확실한 실력 정보이니 <span className="text-primary">선수 정보</span> 탭에서 입력해 주세요.
+            티어를 쓸 거면 참가자 모두 입력하는 게 공평합니다.
           </span>
         </div>
       )}

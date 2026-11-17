@@ -302,3 +302,13 @@ describe("없던 경기 (excluded_reason)", () => {
     expect(parseImportPayload({ format: "naejeon-backup", matches: [row] }).matches[0].excludedReason).toBe("Zeus's Law");
   });
 });
+
+describe("계정 정보 보존", () => {
+  it("puuid·태그·솔랭 티어를 읽어 둔다", () => {
+    const one = asCollector(legacyRows[0], 1);
+    one.players[0] = { ...one.players[0], puuid: "abc", tagLine: "KR1", soloTier: "골드 2" };
+    const p = parseImportPayload(one, "collector").matches[0].players[0];
+    expect([p.puuid, p.tagLine, p.soloTier]).toEqual(["abc", "KR1", "골드 2"]);
+    expect(parseImportPayload(asCollector(legacyRows[0], 2), "collector").matches[0].players[0].puuid).toBeUndefined();
+  });
+});

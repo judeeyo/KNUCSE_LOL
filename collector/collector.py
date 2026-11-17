@@ -173,6 +173,48 @@ def list_pending():
         return []
 
 
+TIER_KO = {
+    "IRON": "아이언", "BRONZE": "브론즈", "SILVER": "실버", "GOLD": "골드", "PLATINUM": "플래티넘",
+    "EMERALD": "에메랄드", "DIAMOND": "다이아", "MASTER": "마스터", "GRANDMASTER": "그랜드마스터", "CHALLENGER": "챌린저",
+}
+DIVISION_NUM = {"I": 1, "II": 2, "III": 3, "IV": 4}
+
+
+def solo_tier_from_ranked(stats):
+    """LCU 랭크 정보 → "다이아 2" 형식 (솔로랭크 기록이 없으면 None)"""
+    if not isinstance(stats, dict):
+        return None
+    entry = (stats.get("queueMap") or {}).get("RANKED_SOLO_5x5")
+    if not entry:
+        entry = next((q for q in stats.get("queues") or [] if q.get("queueType") == "RANKED_SOLO_5x5"), None)
+    if not entry:
+        return None
+    tier = TIER_KO.get(str(entry.get("tier") or "").upper())
+    if not tier:
+        return None  # 배치 전 / 언랭
+    if tier in ("마스터", "그랜드마스터", "챌린저"):
+        return tier
+    div = DIVISION_NUM.get(str(entry.get("division") or "").upper())
+    return f"{tier} {div}" if div else tier
+
+
+def attach_solo_tiers(lock_info, match_data):
+    """참가자별 현재 솔랭 티어를 롤 클라이언트에서 조회해 기록해 둔다 (실패해도 무시).
+    팀 밸런스에는 자동으로 쓰지 않는다 — 나중에 티어가 필요할 때 꺼내 쓰기 위한 기록."""
+    if lock_info is None:
+        return
+    for p in match_data.get("players", []):
+        puuid = p.get("puuid")
+        if not puuid or p.get("soloTier"):
+            continue
+        try:
+            tier = solo_tier_from_ranked(lcu_request(lock_info, f"/lol-ranked/v1/ranked-stats/{puuid}"))
+        except Exception:
+            tier = None
+        if tier:
+            p["soloTier"] = tier
+
+
 def deliver(match_data, source="collector", raw=None):
     """경기 1건 처리의 단일 경로: ① 로컬 백업 → ② 전송 대기열 등록 → ③ 업로드 시도.
     업로드가 실패해도 ①②가 남으므로 데이터는 사라지지 않는다.
@@ -540,6 +582,9 @@ def format_match_data(eog_data):
             )
             player = {
                 "nickname": nickname,
+                # 계정 고유 ID·태그: 닉네임이 바뀌어도 같은 사람으로 이어 주고, 나중에 티어를 조회할 때 쓴다
+                "puuid": p.get("puuid") or None,
+                "tagLine": p.get("riotIdTagLine") or p.get("tagLine") or None,
                 "champion": champion,
                 "team": team_side,
                 "win": is_winner,
@@ -775,6 +820,8 @@ def handle_end_of_game(lock_info, last_game_id):
     if not match_data.get("gameCreation"):
         match_data["gameCreation"] = int(time.time() * 1000) - int(eog.get("gameLength", 0) or 0) * 1000
 
+    attach_solo_tiers(lock_info, match_data)
+
     # 로컬 백업 → 업로드 (실패해도 백업과 전송 대기열에 남는다)
     log("  💾 로컬 백업 후 서버에 업로드 중...")
     status, result = deliver(match_data, source="collector", raw=eog)
@@ -981,9 +1028,11 @@ def format_history_match(game):
 
     # participantId → 닉네임 매핑
     id_map = {}
+    ident_map = {}
     for ident in identities:
         pid = ident.get("participantId")
         player_info = ident.get("player", {})
+        ident_map[pid] = player_info
         id_map[pid] = (
             player_info.get("summonerName")
             or player_info.get("gameName")
@@ -1000,6 +1049,8 @@ def format_history_match(game):
 
         player = {
             "nickname": id_map.get(pid, f"Player{pid}"),
+            "puuid": (ident_map.get(pid) or {}).get("puuid") or None,
+            "tagLine": (ident_map.get(pid) or {}).get("tagLine") or (ident_map.get(pid) or {}).get("riotIdTagline") or None,
             "champion": champion_id_to_name(p.get("championId")),
             "lane": lane_from_timeline(p),
             "team": team_side,
@@ -1125,6 +1176,7 @@ def build_history_match(lock_info, game, label=""):
     if not match_data or len(match_data["players"]) != 10:
         log(f"  {label} ⚠️  데이터 불완전, 건너뜀")
         return None, None
+    attach_solo_tiers(lock_info, match_data)  # 과거 경기여도 "지금" 티어를 기록 (당시 티어는 클라이언트가 주지 않음)
     return match_data, full_game
 
 

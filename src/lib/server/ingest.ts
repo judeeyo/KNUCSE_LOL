@@ -134,6 +134,14 @@ export async function ingestMatches(
     dryRun, total: incoming.length, inserted: 0, updated: 0, merged: 0, skipped: 0, candidates: 0, invalid: 0, membersAdded: 0,
     aliasesAdded: [], aliasConflicts: [], items: [],
   };
+  // 계정 ID(puuid) → 가장 최근에 쓰인 닉네임. 닉네임을 바꾼 사람을 같은 사람으로 잇는 데 쓴다
+  const puuidName = new Map<string, string>();
+  for (const e of [...snap.existing].sort((a, b) => (a.created_at < b.created_at ? -1 : 1))) {
+    for (const p of e.players || []) {
+      const id = typeof p.puuid === "string" ? p.puuid : null;
+      if (id && typeof p.nickname === "string") puuidName.set(id, p.nickname);
+    }
+  }
   // 이번 가져오기에서 새로 생긴 부캐 (기존 표기 → 추가할 Riot 닉네임들)
   const aliasAdds = new Map<string, Set<string>>();
   const noteRenames = (renames: Array<{ from: string; to: string }>) => {
@@ -187,6 +195,17 @@ export async function ingestMatches(
     const target = decision.action === "update" || decision.action === "merge" ? decision.existingId : null;
     const matchId = target || inc.id || uuid();
     let players = buildPlayers(inc, matchId, snap.aliasMap);
+    if (!inc.restore) {
+      // 같은 계정(puuid)이 예전에 다른 닉네임으로 기록돼 있으면 그 닉네임으로 이어 붙인다 (닉네임 변경 대응)
+      const renames: Array<{ from: string; to: string }> = [];
+      players = players.map((p) => {
+        const known = p.puuid ? puuidName.get(p.puuid) : undefined;
+        if (!known || known === p.nickname) return p;
+        renames.push({ from: p.nickname, to: known });
+        return { ...p, nickname: known };
+      });
+      noteRenames(renames);
+    }
     if (target) {
       // 이미 있는 경기에 덮어쓸 때는 닉네임을 기존 기록 그대로 유지한다 (수기 표기·관리자가 고친 이름 보존)
       const existingRow = snap.existing.find((x) => x.id === target);
@@ -256,6 +275,9 @@ export async function ingestMatches(
       }
     }
 
+    for (const p of players) {
+      if (p.puuid) puuidName.set(p.puuid, p.nickname);
+    }
     for (const p of players) {
       if (!snap.memberSet.has(p.nickname) && !snap.aliasMap.has(p.nickname) && !newMembers.has(p.nickname)) {
         newMembers.set(p.nickname, { nickname: p.nickname });

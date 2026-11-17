@@ -179,11 +179,21 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(self.files("backups"), ["match_6006.json"])
 
     # ── 과거 경기 ──
-    def _fake_lcu(self, pages):
-        """endpoint → 응답. 히스토리는 begIndex 로 페이지를 나눠 준다."""
+    def _fake_lcu(self, pages, max_range=None):
+        """endpoint → 응답. 히스토리는 begIndex 로 페이지를 나눠 준다.
+        max_range 를 주면 그보다 큰 범위 요청에 500 을 돌려준다 (실제 클라이언트에서 관찰된 동작)."""
+        def fake_get(lock_info, endpoint, timeout=15):
+            if "/matches?" in endpoint and max_range:
+                beg = int(endpoint.split("begIndex=")[1].split("&")[0])
+                end = int(endpoint.split("endIndex=")[1])
+                if end - beg > max_range:
+                    return 500, None, '{"errorCode":"RPC_ERROR","message":"range too large"}'
+            data = fake(lock_info, endpoint)
+            return (200, data, "") if data is not None else (404, None, "")
+
         def fake(lock_info, endpoint):
             if endpoint == "/lol-summoner/v1/current-summoner":
-                return {"puuid": "PUUID", "gameName": "테스트 유저"}
+                return {"puuid": "aB3_" + "x" * 74, "gameName": "테스트 유저"}
             if "/matches?" in endpoint:
                 beg = int(endpoint.split("begIndex=")[1].split("&")[0])
                 end = int(endpoint.split("endIndex=")[1])
@@ -204,15 +214,38 @@ class CollectorTest(unittest.TestCase):
                 }
             return None
         collector.lcu_request = fake
+        collector.lcu_get = fake_get
         collector._champion_map = {103: "Ahri", 1: "Annie"}
 
     def test_history_paginates_and_keeps_only_custom_games(self):
         games = [{"gameId": i, "queueId": 0 if i % 2 == 0 else 420, "gameType": "CUSTOM_GAME" if i % 2 == 0 else "MATCHED_GAME"} for i in range(450)]
         self._fake_lcu(games)
-        self.assertEqual(len(collector.get_match_history({}, 200)), 450)
+        self.assertEqual(len(collector.get_match_history({})), 450)
         custom = collector.fetch_custom_games({})
         self.assertEqual(len(custom), 225)
         self.assertTrue(all(g["queueId"] == 0 for g in custom))
+
+    def test_history_falls_back_to_smaller_pages_when_client_returns_500(self):
+        games = [{"gameId": i, "queueId": 0, "gameCreation": 1780000000000 + i} for i in range(73)]
+        self._fake_lcu(games, max_range=20)
+        self.assertEqual(len(collector.fetch_custom_games({})), 73)
+        self.assertTrue(any("전체 73경기" in l for l in self.logs))
+
+    def test_history_failure_is_logged_with_reason(self):
+        self._fake_lcu([{"gameId": 1, "queueId": 0}], max_range=1)
+        self.assertEqual(collector.get_match_history({}), [])
+        joined = "\n".join(self.logs)
+        self.assertIn("HTTP 500", joined)
+        self.assertIn("range too large", joined)
+        self.assertNotIn("xxxxxxxx", joined)
+        self.assertIn("/products/lol/<puuid>/matches", joined)
+
+    def test_diagnose_report(self):
+        self._fake_lcu([{"gameId": i, "queueId": 0} for i in range(30)], max_range=20)
+        report = collector.diagnose({})
+        self.assertIn("current-summoner: HTTP 200 OK", report)
+        self.assertIn("[0~200]: HTTP 500", report)
+        self.assertIn("[0~20]: HTTP 200 20경기", report)
 
     def test_export_history_writes_importable_json_without_uploading(self):
         collector.set_upload_token(TOKEN)

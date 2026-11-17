@@ -374,8 +374,15 @@ def parse_lockfile(path):
     return None
 
 
-def lcu_request(lock_info, endpoint):
-    """LCU API 호출"""
+def _redact(endpoint):
+    """로그에 남길 때 puuid 같은 긴 식별자를 가린다"""
+    # Riot PUUID 는 78자 base64url 문자열이라 UUID 형식이 아니다 — 경로 위치로 가린다
+    endpoint = re.sub(r"(/products/lol/)(?!current-summoner/)[^/?]+", r"\1<puuid>", endpoint)
+    return re.sub(r"[A-Za-z0-9_-]{40,}", "<id>", endpoint)
+
+
+def lcu_get(lock_info, endpoint, timeout=15):
+    """LCU API 호출. (HTTP 상태코드, JSON 또는 None, 오류 본문 앞부분) 반환. 연결 실패는 상태 0."""
     url = f"https://127.0.0.1:{lock_info['port']}{endpoint}"
     auth = base64.b64encode(f"riot:{lock_info['password']}".encode()).decode()
 
@@ -384,15 +391,24 @@ def lcu_request(lock_info, endpoint):
     req.add_header("Accept", "application/json")
 
     try:
-        with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:
-            return json.loads(resp.read().decode())
+        with urllib.request.urlopen(req, context=ssl_ctx, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode() or "null"), ""
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        log(f"  HTTP 에러: {e.code}")
-        return None
-    except Exception:
-        return None
+        try:
+            body = e.read().decode(errors="ignore")
+        except Exception:
+            body = ""
+        return e.code, None, body[:300]
+    except Exception as e:
+        return 0, None, str(e)[:300]
+
+
+def lcu_request(lock_info, endpoint):
+    """LCU API 호출 (JSON 또는 None). 404 가 아닌 오류는 어떤 요청이 왜 실패했는지 로그에 남긴다."""
+    status, data, body = lcu_get(lock_info, endpoint)
+    if status and status != 404 and data is None and status >= 400:
+        log(f"  HTTP 에러: {status} ({_redact(endpoint).split('?')[0]}) {body[:150]}")
+    return data
 
 
 def get_game_phase(lock_info):
@@ -850,21 +866,43 @@ def get_current_puuid(lock_info):
     return (me or {}).get("puuid")
 
 
-def get_match_history(lock_info, count=200, max_total=2000):
+HISTORY_PAGE_SIZES = (100, 50, 20, 10)  # 클라이언트가 큰 범위를 거부(500)하면 점점 줄여서 다시 요청
+
+
+def _history_page(lock_info, base, beg, size):
+    """히스토리 한 페이지. (게임 목록 또는 None=요청 실패, 상태코드, 오류 본문)"""
+    status, data, body = lcu_get(lock_info, f"{base}?begIndex={beg}&endIndex={beg + size}", timeout=30)
+    if data is None:
+        return None, status, body
+    games = (data.get("games") or {}).get("games") if isinstance(data, dict) else None
+    return (games or []), status, body
+
+
+def get_match_history(lock_info, count=None, max_total=2000):
     """과거 매치 히스토리 가져오기 (puuid 우선, 구버전 엔드포인트 폴백).
-    한 번에 count 개씩, 더 나오지 않을 때까지 페이지를 넘겨 가며 모은다.
+    한 페이지씩 더 나오지 않을 때까지 넘겨 가며 모은다. 클라이언트가 큰 범위 요청에 500 을 주는 경우가 있어
+    실패하면 페이지 크기를 줄여 다시 시도한다.
     (클라이언트가 보관·제공하는 범위까지만 조회된다 — 그 이전 경기는 이 방법으로 얻을 수 없다)"""
     bases = []
     puuid = get_current_puuid(lock_info)
     if puuid:
         bases.append(f"/lol-match-history/v1/products/lol/{puuid}/matches")
     bases.append("/lol-match-history/v1/products/lol/current-summoner/matches")
+    sizes = (count,) if count else HISTORY_PAGE_SIZES
 
+    failures = []
     for base in bases:
         games, seen, beg = [], set(), 0
+        size_idx = 0
         while beg < max_total:
-            data = lcu_request(lock_info, f"{base}?begIndex={beg}&endIndex={beg + count}")
-            page = ((data or {}).get("games") or {}).get("games") if isinstance(data, dict) else None
+            size = sizes[size_idx]
+            page, status, body = _history_page(lock_info, base, beg, size)
+            if page is None:
+                failures.append(f"{_redact(base)} [{beg}~{beg + size}] → HTTP {status} {body[:120]}")
+                if size_idx + 1 < len(sizes):
+                    size_idx += 1  # 더 작은 범위로 같은 위치를 다시 요청
+                    continue
+                break
             if not page:
                 break
             fresh = [g for g in page if g.get("gameId") not in seen]
@@ -873,12 +911,52 @@ def get_match_history(lock_info, count=200, max_total=2000):
             for g in fresh:
                 seen.add(g.get("gameId"))
             games.extend(fresh)
-            if len(page) < count:
+            if len(page) < size:
                 break
-            beg += count
+            beg += size
         if games:
+            if failures:
+                log(f"  ℹ️  일부 요청은 실패했지만 더 작은 범위로 {len(games)}경기를 가져왔습니다")
             return games
+    for f in failures[:6]:
+        log(f"  ⚠️  히스토리 요청 실패: {f}")
     return []
+
+
+def summarize_history(games):
+    """조회된 전체 전적 요약 (커스텀이 0개일 때 '전적 자체가 없는지'와 구분하기 위함)"""
+    if not games:
+        return "전적을 하나도 받지 못했습니다"
+    stamps = [g.get("gameCreation") for g in games if g.get("gameCreation")]
+    span = ""
+    if stamps:
+        fmt = lambda ms: datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+        span = f", {fmt(min(stamps))} ~ {fmt(max(stamps))}"
+    queues = {}
+    for g in games:
+        q = g.get("queueId", "?")
+        queues[q] = queues.get(q, 0) + 1
+    top = ", ".join(f"큐 {q}: {n}" for q, n in sorted(queues.items(), key=lambda x: -x[1])[:6])
+    return f"전체 {len(games)}경기{span} ({top})"
+
+
+def diagnose(lock_info):
+    """과거 전적 조회 문제 진단 — 각 요청의 상태코드를 모아 한 덩어리 문자열로 반환 (비밀값·puuid 없음)"""
+    lines = []
+    st, me, body = lcu_get(lock_info, "/lol-summoner/v1/current-summoner")
+    lines.append(f"current-summoner: HTTP {st} {'OK' if me else body[:120]}")
+    puuid = (me or {}).get("puuid")
+    st, phase, _ = lcu_get(lock_info, "/lol-gameflow/v1/gameflow-phase")
+    lines.append(f"gameflow-phase: HTTP {st} {phase}")
+    bases = ([f"/lol-match-history/v1/products/lol/{puuid}/matches"] if puuid else []) + [
+        "/lol-match-history/v1/products/lol/current-summoner/matches"
+    ]
+    for base in bases:
+        for size in (200, 100, 20, 5):
+            page, st, body = _history_page(lock_info, base, 0, size)
+            desc = f"{len(page)}경기" if page is not None else body[:120]
+            lines.append(f"{_redact(base)} [0~{size}]: HTTP {st} {desc}")
+    return "\n".join(lines)
 
 
 def get_full_game(lock_info, game_id):
@@ -949,7 +1027,8 @@ def format_history_match(game):
 
 def fetch_custom_games(lock_info):
     """매치 히스토리에서 커스텀 게임만 필터해 반환"""
-    games = get_match_history(lock_info, 200)
+    games = get_match_history(lock_info)
+    log(f"  조회 결과: {summarize_history(games)}")
     return [
         g for g in games
         if g.get("queueId", -1) == 0 or g.get("gameType") == "CUSTOM_GAME"
@@ -1244,6 +1323,8 @@ class CollectorGUI:
         self.upload_btn.pack(side="right")
         self.export_btn = self._button(toolbar, "선택한 경기 JSON 저장", self.export_selected)
         self.export_btn.pack(side="right", padx=(0, 8))
+        self.diag_btn = self._button(toolbar, "진단", self.diagnose_clicked)
+        self.diag_btn.pack(side="left", padx=(8, 0))
 
         hint = tk.Label(inner, text="Ctrl/Shift 클릭으로 여러 경기를 선택할 수 있습니다. (목록에는 내 챔피언/승패만 표시)",
                         bg=C_PANEL2, fg=C_MUTED, font=("맑은 고딕", 9))
@@ -1358,6 +1439,7 @@ class CollectorGUI:
             games = fetch_custom_games(lock_info)
             if not games:
                 self.log_from_thread("조회 가능한 전적에 커스텀 게임이 없습니다.")
+                self.log_from_thread("[진단] 버튼을 누르면 원인 파악용 결과가 로그에 나옵니다. 그 내용을 관리자에게 보내주세요.")
             self.ui_queue.put(("games", games))
         except Exception as e:
             self.log_from_thread(f"⚠️  조회 실패: {e}")
@@ -1408,6 +1490,17 @@ class CollectorGUI:
             self.log_from_thread(f"⚠️  업로드 실패: {e}")
         finally:
             self.ui_queue.put(("busy_done", None))
+
+    def diagnose_clicked(self):
+        def work():
+            lock_info = get_credentials()
+            if not lock_info:
+                self.log_from_thread("❌ 롤 클라이언트를 찾을 수 없습니다. 로그인 후 로비 화면이 떠 있어야 합니다.")
+                return
+            self.log_from_thread("진단 중... (최대 1분)")
+            report = diagnose(lock_info)
+            self.log_from_thread("──── 진단 결과 (이 부분을 복사해 보내주세요) ────\n" + report + "\n────────────────")
+        threading.Thread(target=work, daemon=True).start()
 
     def export_selected(self):
         """선택한(없으면 전체) 과거 경기를 JSON 파일로 저장 — 서버에 올리지 않는다"""
@@ -1659,6 +1752,9 @@ def main(argv):
         cli_main()
     elif flag == "--export-history":
         return export_history_mode(args[1] if len(args) > 1 else None)
+    elif flag == "--diagnose":
+        lock_info = get_credentials()
+        print(diagnose(lock_info) if lock_info else "  ❌ 롤 클라이언트를 찾을 수 없습니다.")
     elif flag == "--retry":
         retry_pending()
     elif flag == "--set-token":

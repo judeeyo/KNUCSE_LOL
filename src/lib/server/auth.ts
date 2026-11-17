@@ -22,9 +22,12 @@ function check(provided: string | null, expected: string | undefined, envName: s
   return { ok: true };
 }
 
-/** 기록 수정(웹 관리 기능) 권한: ADMIN_PASSWORD */
+/** 기록 수정(웹 관리 기능) 권한: ADMIN_PASSWORD.
+ * 브라우저는 x-admin-password 헤더로, 스크립트·자동화 도구는 Authorization: Bearer 로 보낼 수 있다. */
 export function checkAdmin(req: NextRequest): AuthResult {
-  return check(req.headers.get("x-admin-password"), process.env.ADMIN_PASSWORD, "ADMIN_PASSWORD");
+  const header = req.headers.get("authorization");
+  const bearer = header?.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : null;
+  return check(req.headers.get("x-admin-password") || bearer, process.env.ADMIN_PASSWORD, "ADMIN_PASSWORD");
 }
 
 /** 수집기 업로드 권한: UPLOAD_SECRET (기록 추가만 가능, 수정·삭제 불가) */

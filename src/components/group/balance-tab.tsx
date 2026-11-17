@@ -56,7 +56,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
   const [options, setOptions] = useState<BalanceResult[]>([]);
   const [optionIdx, setOptionIdx] = useState(0);
   const [ran, setRan] = useState(false);
-  const [avoidRecent, setAvoidRecent] = useState(true);
+  const [avoidRecent, setAvoidRecent] = useState(false);
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [pairA, setPairA] = useState("");
   const [pairB, setPairB] = useState("");

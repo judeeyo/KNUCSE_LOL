@@ -517,3 +517,29 @@ describe("팀 밸런스 보강", async () => {
     expect(recentRosters([m])).toEqual([["a"], ["b"]]);
   });
 });
+
+describe("최근 참가 보정", async () => {
+  const { activityOf, formatLastPlayed, buildPlayerStats: bps } = await import("./stats");
+  const DAY = 86400000;
+  const now = Date.parse("2026-11-17T12:00:00Z");
+  it("한 달까지는 감점 없음, 이후 3개월 직전까지 최대 15% 감점, 3개월 이상은 미참여", () => {
+    expect(activityOf(new Date(now - 10 * DAY).toISOString(), now)).toMatchObject({ factor: 1, inactive: false });
+    expect(activityOf(new Date(now - 30 * DAY).toISOString(), now).factor).toBe(1);
+    expect(activityOf(new Date(now - 60 * DAY).toISOString(), now).factor).toBeCloseTo(0.925);
+    expect(activityOf(new Date(now - 89 * DAY).toISOString(), now).inactive).toBe(false);
+    expect(activityOf(new Date(now - 90 * DAY).toISOString(), now).inactive).toBe(true);
+    expect(activityOf("", now).inactive).toBe(true);
+  });
+  it("날짜 표시는 한국 날짜 기준", () => {
+    expect(formatLastPlayed("2026-11-16T15:30:00Z", now)).toEqual({ date: "2026.11.17", ago: "오늘" });
+    expect(formatLastPlayed("2026-07-02T03:00:00Z", now).ago).toBe("4개월 전");
+    expect(formatLastPlayed("2026-11-16T14:00:00Z", now).ago).toBe("어제"); // KST 11/16 23:00 → 다음 날 기준 어제
+  });
+  it("PlayerStats.lastPlayedAt 은 마지막 참가 경기 시각", () => {
+    const m1 = { ...match([ps({ nickname: "a", team: "blue", win: true }), ps({ nickname: "b", team: "red", win: false })]), createdAt: "2026-06-01T00:00:00Z" };
+    const m2 = { ...match([ps({ nickname: "a", team: "blue", win: true }), ps({ nickname: "c", team: "red", win: false })]), createdAt: "2026-11-01T00:00:00Z" };
+    const stats = bps({ id: "g", name: "g", inviteCode: "", createdAt: "", members: [], matches: [m1, m2] });
+    expect(stats.find((s) => s.nickname === "a")!.lastPlayedAt).toBe("2026-11-01T00:00:00Z");
+    expect(stats.find((s) => s.nickname === "b")!.lastPlayedAt).toBe("2026-06-01T00:00:00Z");
+  });
+});

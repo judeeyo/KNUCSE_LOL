@@ -5,6 +5,48 @@ function byCreatedAt<T extends { createdAt: string }>(a: T, b: T): number {
   return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0;
 }
 
+// ─── 최근 참가 (순위 표시용) ───
+
+/** 이 기간(일)을 넘게 내전에 참가하지 않으면 순위 맨 아래로 보내고 "미참여" 표시 */
+export const INACTIVE_DAYS = 90;
+/** 이 기간(일)이 지나면 순위 점수를 조금씩 낮춘다 (INACTIVE_DAYS 직전에 최대 15% 감점) */
+const ACTIVITY_DECAY_START_DAYS = 30;
+const ACTIVITY_MAX_DECAY = 0.15;
+
+export interface Activity {
+  daysSince: number; // 마지막 참가 후 지난 일수 (기록 없으면 Infinity)
+  factor: number; // 순위 점수에 곱하는 값 (1 = 감점 없음)
+  inactive: boolean; // INACTIVE_DAYS 이상 미참여
+}
+
+/**
+ * 마지막 참가일로 순위 보정값을 계산한다. 순위 표시에만 쓰고 팀 밸런스 실력 점수에는 쓰지 않는다
+ * (오래 쉬었다고 실력이 낮아지는 건 아니므로).
+ */
+export function activityOf(lastPlayedAt: string | undefined, now: number = Date.now()): Activity {
+  const t = lastPlayedAt ? Date.parse(lastPlayedAt) : NaN;
+  if (!Number.isFinite(t)) return { daysSince: Infinity, factor: 1 - ACTIVITY_MAX_DECAY, inactive: true };
+  const daysSince = Math.max(0, (now - t) / 86400000);
+  if (daysSince >= INACTIVE_DAYS) return { daysSince, factor: 1 - ACTIVITY_MAX_DECAY, inactive: true };
+  const over = Math.max(0, daysSince - ACTIVITY_DECAY_START_DAYS);
+  const factor = 1 - (ACTIVITY_MAX_DECAY * over) / (INACTIVE_DAYS - ACTIVITY_DECAY_START_DAYS);
+  return { daysSince, factor, inactive: false };
+}
+
+/** "2026.11.16 (3일 전)" 형태 */
+export function formatLastPlayed(lastPlayedAt: string | undefined, now: number = Date.now()): { date: string; ago: string } {
+  const t = lastPlayedAt ? Date.parse(lastPlayedAt) : NaN;
+  if (!Number.isFinite(t)) return { date: "-", ago: "" };
+  const d = new Date(t + 9 * 3600 * 1000); // 한국 날짜
+  const date = `${d.getUTCFullYear()}.${String(d.getUTCMonth() + 1).padStart(2, "0")}.${String(d.getUTCDate()).padStart(2, "0")}`;
+  // 경과 시간이 아니라 한국 날짜(달력) 기준으로 센다 — 어젯밤 경기가 "오늘"로 보이지 않게
+  const kstDay = (ms: number) => Math.floor((ms + 9 * 3600 * 1000) / 86400000);
+  const days = kstDay(now) - kstDay(t);
+  const ago =
+    days <= 0 ? "오늘" : days === 1 ? "어제" : days < 30 ? `${days}일 전` : days < 365 ? `${Math.floor(days / 30)}개월 전` : `${Math.floor(days / 365)}년 전`;
+  return { date, ago };
+}
+
 // ─── Player Stats ───
 
 /**
@@ -53,6 +95,7 @@ export interface PlayerStats {
   laneStats: LaneUsage[];
   recentMatches: { win: boolean; date: string }[];
   momentum: number | null; // 최근 5경기 승률 − 그 이전 승률 (10경기 미만이면 null)
+  lastPlayedAt: string; // 마지막으로 내전에 참가한 시각 (ISO)
 }
 
 export interface LaneUsage {
@@ -249,6 +292,7 @@ export function buildPlayerStats(group: Group): PlayerStats[] {
         laneStats,
         recentMatches,
         momentum,
+        lastPlayedAt: [...matchDates.values()].reduce((a, b) => (a > b ? a : b), ""),
       };
     });
 
@@ -329,6 +373,7 @@ export interface LaneRankEntry {
   winRate: number; // 해당 라인 승률
   avgKda: number; // 해당 라인 KDA
   score: number; // 선수별 성적의 종합 점수(totalScore, 그룹 내 백분위 가중합 0~100)
+  lastPlayedAt: string; // 이 선수가 마지막으로 내전에 참가한 시각 (라인 무관)
 }
 
 export interface LaneRanking {
@@ -380,12 +425,14 @@ export function buildLaneRankings(
     support: new Map(),
   };
 
+  const lastPlayed = new Map<string, string>();
   for (const m of group.matches) {
     const minutes = parseDurationMinutes(m.gameDuration);
     const teamKills = { blue: 0, red: 0 };
     for (const p of m.players) teamKills[p.team] += p.kills;
 
     for (const p of m.players) {
+      if ((lastPlayed.get(p.nickname) || "") < m.createdAt) lastPlayed.set(p.nickname, m.createdAt);
       if (!p.lane) continue;
       const map = perLane[p.lane];
       const a =
@@ -472,6 +519,7 @@ export function buildLaneRankings(
         winRate: m.winRate,
         avgKda: m.avgKda,
         score: base * confidence,
+        lastPlayedAt: lastPlayed.get(m.nickname) || "",
       };
     });
 

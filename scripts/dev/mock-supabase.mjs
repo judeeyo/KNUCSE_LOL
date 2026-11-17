@@ -23,6 +23,12 @@ const SERVICE = "service-test";
 
 function seed() {
   if (args.includes("--empty")) return { matches: [], members: [] };
+  // --seed <백업 JSON>: 사이트 "백업 내려받기" 파일(또는 {matches, members})로 시작
+  const seedIdx = args.indexOf("--seed");
+  if (seedIdx >= 0) {
+    const data = JSON.parse(readFileSync(args[seedIdx + 1], "utf8"));
+    return { matches: data.matches || [], members: data.members || [] };
+  }
   const raw = JSON.parse(readFileSync(join(root, "data/legacy/naejeon-lol-28-matches.json"), "utf8"));
   const matches = buildLegacyRows(raw).map((r) => ({ ...r, uploaded_at: "2026-11-01T00:00:00+00:00" }));
   const names = [...new Set(matches.flatMap((m) => m.players.map((p) => p.nickname)))].sort();

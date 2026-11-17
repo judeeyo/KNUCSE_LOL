@@ -5,7 +5,7 @@ import { StatTable, stickyHead } from "@/components/ui/stat-table";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { ChevronLeft, ChevronRight, Crown } from "lucide-react";
-import { leaderboardMinGames, rankMomentum, type PlayerStats, type Award } from "@/lib/stats";
+import { activityOf, formatLastPlayed, INACTIVE_DAYS, leaderboardMinGames, rankMomentum, type PlayerStats, type Award } from "@/lib/stats";
 
 type SortKey =
   | "totalScore" | "winRate" | "avgKda" | "csPerMin" | "avgVision"
@@ -51,6 +51,8 @@ export function PlayerStatsTab({
   matchCount: number;
 }) {
   const [showAll, setShowAll] = useState(false);
+  // 기준 시각은 탭을 열 때 한 번만 잡는다 (렌더마다 바뀌지 않게)
+  const [now] = useState(() => Date.now());
   const [sortBy, setSortBy] = useState<SortKey>("totalScore");
   const [sortAsc, setSortAsc] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<PlayerStats | null>(null);
@@ -68,10 +70,18 @@ export function PlayerStatsTab({
   const qualified = playerStats.filter((p) => p.gamesPlayed >= minGames);
   const hiddenCount = playerStats.length - qualified.length;
   const eligible = showAll ? playerStats : qualified;
+  // 최근 참가 보정: 한 달이 지나면 순위 점수를 조금씩 낮추고, 3개월 이상 미참여는 정렬과 무관하게 맨 아래
+  const activity = new Map(eligible.map((p) => [p.nickname, activityOf(p.lastPlayedAt, now)]));
+  const rankScore = (p: PlayerStats) => p.totalScore * (activity.get(p.nickname)?.factor ?? 1);
+  const valueOf = (p: PlayerStats) => (sortBy === "totalScore" ? rankScore(p) : (p[sortBy] as number));
   const sorted = [...eligible].sort((a, b) => {
-    const diff = (a[sortBy] as number) - (b[sortBy] as number);
+    const ia = activity.get(a.nickname)?.inactive ? 1 : 0;
+    const ib = activity.get(b.nickname)?.inactive ? 1 : 0;
+    if (ia !== ib) return ia - ib;
+    const diff = valueOf(a) - valueOf(b);
     return sortAsc ? diff : -diff;
   });
+  const inactiveCount = sorted.filter((p) => activity.get(p.nickname)?.inactive).length;
 
   // 상승세/하락세: 최근 폼 추세(momentum) 상위 3명씩만 표기
   const { rising, falling } = rankMomentum(eligible, 3);
@@ -103,12 +113,18 @@ export function PlayerStatsTab({
           ℹ️ 시야점수·골드당 딜은 상세 데이터가 수집된 경기만으로 계산합니다. 수기로 복원한 과거 경기는 이 값이 없어 <span className="text-ink-subtle">미수집</span>으로 표시되며, 점수에는 유불리 없이(중립) 반영됩니다.
         </div>
       )}
+      <div className="text-xs text-ink-tertiary break-keep">
+        🕒 마지막 참가 후 한 달이 지나면 순위 점수를 조금씩 낮추고(최대 15%), {INACTIVE_DAYS}일 이상 참가하지 않은 선수는 맨 아래에 ⚠️로 표시합니다.
+      </div>
       <StatTable>
             <thead className={stickyHead}>
               <tr className="text-ink-subtle text-xs border-b border-hairline">
                 <th className="text-center py-3 px-2 w-10">#</th>
                 <th className="text-left py-3 px-3">플레이어</th>
                 <SortTh {...thProps} label="경기" sortKey="gamesPlayed" />
+                <th className="text-center py-3 px-2 whitespace-nowrap" title={`마지막으로 내전에 참가한 날. 한 달이 지나면 점수를 조금씩 낮추고, ${INACTIVE_DAYS}일 이상이면 맨 아래로 내립니다`}>
+                  마지막 참가
+                </th>
                 <SortTh {...thProps} label="승률" sortKey="winRate" />
                 <SortTh {...thProps} label="KDA" sortKey="avgKda" />
                 <SortTh {...thProps} label="분당 CS" sortKey="csPerMin" />
@@ -120,26 +136,39 @@ export function PlayerStatsTab({
                   {...thProps}
                   label="점수"
                   sortKey="totalScore"
-                  title="그룹 내 백분위 가중합 (0~100): 승률(판수 보정) 30% + MVP/ACE 15% + KDA 10% + 킬관여 10% + 분당CS 10% + 시야 10% + 골드당 딜 10% + 판수 5%, 판수가 적으면 신뢰도 계수로 감점"
+                  title="그룹 내 백분위 가중합 (0~100): 승률(판수 보정) 30% + MVP/ACE 15% + KDA 10% + 킬관여 10% + 분당CS 10% + 시야 10% + 골드당 딜 10% + 판수 5%, 판수가 적으면 신뢰도 계수로 감점. 마지막 참가 후 한 달이 지나면 최대 15%까지 감점"
                 />
               </tr>
             </thead>
             <tbody>
-              {sorted.map((entry, rank) => (
+              {sorted.map((entry, rank) => {
+                const act = activity.get(entry.nickname)!;
+                const last = formatLastPlayed(entry.lastPlayedAt, now);
+                const firstInactive = act.inactive && rank === sorted.length - inactiveCount;
+                return (
                 <tr
                   key={entry.nickname}
-                  className="border-b border-hairline/30 hover:bg-surface-2/50 transition-colors cursor-pointer"
+                  className={`border-b border-hairline/30 hover:bg-surface-2/50 transition-colors cursor-pointer ${act.inactive ? "opacity-60" : ""} ${firstInactive ? "border-t-2 border-t-mvp/40" : ""}`}
                   onClick={() => setSelectedPlayer(entry)}
                 >
                   <td className="text-center py-3 px-2">
-                    <span className={`font-bold ${rank === 0 ? "rank-1 text-base" : rank === 1 ? "rank-2" : rank === 2 ? "rank-3" : "text-ink-subtle"}`}>
-                      {rank + 1}
-                    </span>
+                    {act.inactive ? (
+                      <span className="text-mvp" title={`${INACTIVE_DAYS}일 이상 내전 미참여`}>⚠️</span>
+                    ) : (
+                      <span className={`font-bold ${rank === 0 ? "rank-1 text-base" : rank === 1 ? "rank-2" : rank === 2 ? "rank-3" : "text-ink-subtle"}`}>
+                        {rank + 1}
+                      </span>
+                    )}
                   </td>
                   <td className="py-3 px-3">
                     <div className="font-medium text-ink flex items-center gap-1.5 whitespace-nowrap">
-                      {rank === 0 && <Crown size={14} className="text-gold" />}
+                      {rank === 0 && !act.inactive && <Crown size={14} className="text-gold" />}
                       {entry.nickname}
+                      {act.inactive && (
+                        <span className="text-[10px] font-semibold text-mvp border border-mvp/40 bg-mvp/10 rounded px-1.5 py-0.5">
+                          3개월+ 미참여
+                        </span>
+                      )}
                       {rising.has(entry.nickname) && (
                         <span title="상승세 (최근 폼 상승)" className="text-sm leading-none">🔥</span>
                       )}
@@ -151,6 +180,10 @@ export function PlayerStatsTab({
                   <td className="text-center py-3 px-2 text-ink-muted">
                     <span>{entry.gamesPlayed}</span>
                     <span className="text-ink-subtle text-xs ml-1">({entry.wins}W {entry.losses}L)</span>
+                  </td>
+                  <td className="text-center py-3 px-2 whitespace-nowrap">
+                    <div className={act.inactive ? "text-mvp" : act.factor < 1 ? "text-ink-muted" : "text-ink"}>{last.date}</div>
+                    <div className="text-[11px] text-ink-tertiary">{last.ago}</div>
                   </td>
                   <td className="text-center py-3 px-2">
                     <span className={entry.winRate >= 55 ? "text-win font-bold" : entry.winRate < 45 ? "text-lose" : "text-ink"}>
@@ -190,10 +223,17 @@ export function PlayerStatsTab({
                     </div>
                   </td>
                   <td className="text-center py-3 px-2">
-                    <span className="font-bold text-primary">{entry.totalScore.toFixed(1)}</span>
+                    <span
+                      className="font-bold text-primary"
+                      title={act.factor < 1 ? `원점수 ${entry.totalScore.toFixed(1)} × ${act.factor.toFixed(2)} (마지막 참가 ${Math.floor(act.daysSince)}일 전)` : undefined}
+                    >
+                      {rankScore(entry).toFixed(1)}
+                    </span>
+                    {act.factor < 1 && !act.inactive && <div className="text-[10px] text-ink-tertiary">휴식 감점</div>}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
       </StatTable>
 

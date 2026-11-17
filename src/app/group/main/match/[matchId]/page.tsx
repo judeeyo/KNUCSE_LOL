@@ -8,12 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Trophy, Flame, Shield, Eye, Clock, Swords, Edit3, Save, Trash2 } from "lucide-react";
 import { ChampionIcon } from "@/components/ui/champion-icon";
+import { Loadout } from "@/components/ui/loadout";
 import { LoadError } from "@/components/ui/load-error";
 import { AdminCancelledError } from "@/lib/admin-client";
 import { backToList } from "@/lib/list-position";
 import Link from "next/link";
 import { playerHref } from "@/lib/profile";
-import type { Match, PlayerStat, Member } from "@/lib/types";
+import type { Match, PlayerStat, Member, TeamObjectives } from "@/lib/types";
 
 const LANE_EMOJI: Record<string, string> = {
   top: "🛡️", jungle: "🌿", mid: "🔥", adc: "🏹", support: "💚",
@@ -313,13 +314,13 @@ export default function MatchDetailPage() {
         </div>
       </Card>
 
-      <TeamSection team="blue" players={editing ? editPlayers.filter(p => p.team === "blue") : blue} win={blueWin} maxDamage={maxDamage} maxTaken={maxTaken} maxGold={maxGold} getRealName={getMemberRealName} editing={editing} onUpdate={editing ? (idx, field, val) => {
+      <TeamSection team="blue" objectives={match.objectives?.blue} players={editing ? editPlayers.filter(p => p.team === "blue") : blue} win={blueWin} maxDamage={maxDamage} maxTaken={maxTaken} maxGold={maxGold} getRealName={getMemberRealName} editing={editing} onUpdate={editing ? (idx, field, val) => {
         const blueIdxMap = editPlayers.map((p, i) => p.team === "blue" ? i : -1).filter(i => i !== -1);
         const realIdx = blueIdxMap[idx];
         if (realIdx !== undefined) setEditPlayers(prev => { const next = [...prev]; next[realIdx] = { ...next[realIdx], [field]: val }; return next; });
       } : undefined} />
       <div className="my-4" />
-      <TeamSection team="red" players={editing ? editPlayers.filter(p => p.team === "red") : red} win={!blueWin} maxDamage={maxDamage} maxTaken={maxTaken} maxGold={maxGold} getRealName={getMemberRealName} editing={editing} onUpdate={editing ? (idx, field, val) => {
+      <TeamSection team="red" objectives={match.objectives?.red} players={editing ? editPlayers.filter(p => p.team === "red") : red} win={!blueWin} maxDamage={maxDamage} maxTaken={maxTaken} maxGold={maxGold} getRealName={getMemberRealName} editing={editing} onUpdate={editing ? (idx, field, val) => {
         const redIdxMap = editPlayers.map((p, i) => p.team === "red" ? i : -1).filter(i => i !== -1);
         const realIdx = redIdxMap[idx];
         if (realIdx !== undefined) setEditPlayers(prev => { const next = [...prev]; next[realIdx] = { ...next[realIdx], [field]: val }; return next; });
@@ -329,8 +330,8 @@ export default function MatchDetailPage() {
   );
 }
 
-function TeamSection({ team, players, win, maxDamage, maxTaken, maxGold, getRealName, editing, onUpdate }: {
-  team: "blue" | "red"; players: PlayerStat[]; win: boolean;
+function TeamSection({ team, objectives, players, win, maxDamage, maxTaken, maxGold, getRealName, editing, onUpdate }: {
+  team: "blue" | "red"; objectives?: TeamObjectives; players: PlayerStat[]; win: boolean;
   maxDamage: number; maxTaken: number; maxGold: number;
   getRealName: (n: string) => string | undefined;
   editing?: boolean;
@@ -347,8 +348,19 @@ function TeamSection({ team, players, win, maxDamage, maxTaken, maxGold, getReal
           <span className={`text-sm font-bold ${teamColor}`}>{team === "blue" ? "블루팀" : "레드팀"}</span>
           <Badge variant={win ? "win" : "lose"}>{win ? "승리" : "패배"}</Badge>
         </div>
-        <div className="text-xs text-ink-subtle">
-          {players.reduce((s, p) => s + p.kills, 0)}/{players.reduce((s, p) => s + p.deaths, 0)}/{players.reduce((s, p) => s + p.assists, 0)}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-subtle">
+          {objectives && (
+            <span className="flex flex-wrap gap-x-2 text-ink-muted" aria-label="팀 오브젝트">
+              <span title="파괴한 포탑">포탑 {objectives.towers}</span>
+              <span title="파괴한 억제기">억제기 {objectives.inhibitors}</span>
+              <span title="처치한 드래곤">드래곤 {objectives.dragons}</span>
+              <span title="처치한 바론">바론 {objectives.barons}</span>
+              <span title="처치한 전령">전령 {objectives.heralds}</span>
+            </span>
+          )}
+          <span className="tabular-nums">
+            {players.reduce((s, p) => s + p.kills, 0)}/{players.reduce((s, p) => s + p.deaths, 0)}/{players.reduce((s, p) => s + p.assists, 0)}
+          </span>
         </div>
       </div>
       <div className="divide-y divide-hairline/30">
@@ -359,6 +371,10 @@ function TeamSection({ team, players, win, maxDamage, maxTaken, maxGold, getReal
           const takenPercent = maxTaken > 0 ? (p.damageTaken / maxTaken) * 100 : 0;
           const goldPercent = maxGold > 0 ? (p.gold / maxGold) * 100 : 0;
           const realName = getRealName(p.nickname);
+          const teamKills = players.reduce((s, q) => s + q.kills, 0);
+          const teamDamage = players.reduce((s, q) => s + (q.damageDealt || 0), 0);
+          const kp = teamKills > 0 ? ((p.kills + p.assists) / teamKills) * 100 : 0;
+          const dmgShare = !p.noDamage && teamDamage > 0 ? ((p.damageDealt || 0) / teamDamage) * 100 : null;
           const editNum = (field: string, value: string) => onUpdate?.(pIdx, field, parseInt(value) || 0);
 
           return (
@@ -414,6 +430,15 @@ function TeamSection({ team, players, win, maxDamage, maxTaken, maxGold, getReal
                   )}
                 </div>
               </div>
+              {!editing && (
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 mb-2 sm:ml-[46px]">
+                  <Loadout player={p} />
+                  <div className="text-[11px] text-ink-tertiary whitespace-nowrap">
+                    킬관여 <span className="text-ink-subtle">{kp.toFixed(0)}%</span>
+                    {dmgShare !== null && <> · 팀 딜 비중 <span className="text-ink-subtle">{dmgShare.toFixed(0)}%</span></>}
+                  </div>
+                </div>
+              )}
               {editing ? (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:ml-[46px] text-xs">
                   <div><span className="text-ink-tertiary">CS</span><input type="number" className="w-full bg-transparent border-b border-hairline text-ink text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none" value={p.cs} onChange={(e) => editNum("cs", e.target.value)} /></div>

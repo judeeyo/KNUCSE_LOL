@@ -545,6 +545,52 @@ def extract_bans(game):
     return bans if (bans["blue"] or bans["red"]) else None
 
 
+def loadout_from_history(participant):
+    """매치 상세(참가자)에서 아이템·소환사 주문·룬 (op.gg 식 경기 상세용)"""
+    stats = participant.get("stats", {}) or {}
+    items = [int(stats.get(f"item{i}", 0) or 0) for i in range(7)]  # 0~5 아이템, 6 장신구
+    return {
+        "items": items,
+        "spell1Id": participant.get("spell1Id") or None,
+        "spell2Id": participant.get("spell2Id") or None,
+        "perkKeystone": stats.get("perk0") or None,
+        "perkPrimaryStyle": stats.get("perkPrimaryStyle") or None,
+        "perkSubStyle": stats.get("perkSubStyle") or None,
+    }
+
+
+def loadout_from_eog(player):
+    """게임 종료 화면 데이터에서 아이템·주문·룬 (필드가 없으면 빈 값 — 매치 상세 보강이 채움)"""
+    stats = player.get("stats", {}) or {}
+    items = player.get("items")
+    out = {}
+    if isinstance(items, list) and items:
+        out["items"] = [int(x or 0) for x in items[:7]] + [0] * max(0, 7 - len(items))
+    for key, src in (("spell1Id", player.get("spell1Id")), ("spell2Id", player.get("spell2Id")),
+                     ("perkKeystone", stats.get("PERK0")), ("perkPrimaryStyle", stats.get("PERK_PRIMARY_STYLE")),
+                     ("perkSubStyle", stats.get("PERK_SUB_STYLE"))):
+        if src:
+            out[key] = src
+    return out
+
+
+def objectives_from_history(game):
+    """팀별 오브젝트 (포탑·억제기·드래곤·바론·전령). 정보가 없으면 None"""
+    out = {}
+    for team in game.get("teams", []) or []:
+        side = "blue" if team.get("teamId", 100) == 100 else "red"
+        if "towerKills" not in team and "dragonKills" not in team:
+            continue
+        out[side] = {
+            "towers": int(team.get("towerKills", 0) or 0),
+            "inhibitors": int(team.get("inhibitorKills", 0) or 0),
+            "dragons": int(team.get("dragonKills", 0) or 0),
+            "barons": int(team.get("baronKills", 0) or 0),
+            "heralds": int(team.get("riftHeraldKills", 0) or 0),
+        }
+    return out if len(out) == 2 else None
+
+
 def format_duration(total_seconds):
     minutes = int(total_seconds) // 60
     seconds = int(total_seconds) % 60
@@ -606,6 +652,7 @@ def format_match_data(eog_data):
                 "firstBlood": bool(stats.get("FIRST_BLOOD", 0)),
                 "largestMultiKill": stats.get("LARGEST_MULTI_KILL", 0),
             }
+            player.update(loadout_from_eog(p))
             players.append(player)
 
     return {
@@ -718,10 +765,13 @@ def enrich_from_history(lock_info, match_data, game_id):
     있음 — 실패해도 무시 (서버가 폴백 처리)"""
     full = get_full_game(lock_info, game_id)
     if not full:
-        return
+        return False
     bans = extract_bans(full)
     if bans:
         match_data["bans"] = bans
+    objectives = objectives_from_history(full)
+    if objectives:
+        match_data["objectives"] = objectives
     if full.get("gameCreation"):
         match_data["gameCreation"] = full["gameCreation"]
     ident_map = {
@@ -740,6 +790,7 @@ def enrich_from_history(lock_info, match_data, game_id):
             continue
         stats = p.get("stats", {})
         extra_by_name[name] = {
+            "loadout": loadout_from_history(p),
             "lane": lane_from_timeline(p),
             "turretDamage": stats.get("damageDealtToTurrets", 0),
             "firstBlood": stats.get("firstBloodKill", False),
@@ -757,6 +808,8 @@ def enrich_from_history(lock_info, match_data, game_id):
             mp["firstBlood"] = True
         if extra["largestMultiKill"]:
             mp["largestMultiKill"] = extra["largestMultiKill"]
+        mp.update({k: v for k, v in extra["loadout"].items() if v})
+    return True
 
 
 def handle_end_of_game(lock_info, last_game_id):
@@ -810,11 +863,14 @@ def handle_end_of_game(lock_info, last_game_id):
 
     print_match_summary(match_data)
 
-    # 포지션·포탑딜·선취점·멀티킬 보강
+    # 포지션·포탑딜·선취점·멀티킬·아이템·룬·오브젝트 보강.
+    # 게임 직후에는 매치 상세가 아직 없을 수 있어, 없으면 잠시 뒤 다시 받아 같은 경기로 갱신 업로드한다
     try:
-        enrich_from_history(lock_info, match_data, game_id)
+        enriched = enrich_from_history(lock_info, match_data, game_id)
     except Exception:
-        pass
+        enriched = False
+    if not enriched and game_id:
+        _pending_enrich[game_id] = {"match": match_data, "tries": 0, "next": time.time() + ENRICH_RETRY_INTERVAL}
 
     # 히스토리 보강이 안 됐으면(게임 직후라 아직 없음) 종료 시각에서 역산해 경기 시각을 채운다
     if not match_data.get("gameCreation"):
@@ -828,6 +884,33 @@ def handle_end_of_game(lock_info, last_game_id):
     log("  " + describe_upload(status, result))
 
     return game_id
+
+
+# 게임 직후 매치 상세가 없던 경기: 나중에 보강해서 다시 올린다 (gameId 가 같아 서버에서는 갱신)
+ENRICH_RETRY_INTERVAL = 30  # 초
+ENRICH_MAX_TRIES = 20  # 약 10분
+_pending_enrich = {}
+
+
+def process_pending_enrich(lock_info):
+    """보강 대기 중인 경기를 다시 시도. 성공하면 갱신 업로드"""
+    now = time.time()
+    for game_id, item in list(_pending_enrich.items()):
+        if now < item["next"]:
+            continue
+        item["tries"] += 1
+        item["next"] = now + ENRICH_RETRY_INTERVAL
+        try:
+            ok = enrich_from_history(lock_info, item["match"], game_id)
+        except Exception:
+            ok = False
+        if ok:
+            del _pending_enrich[game_id]
+            status, result = deliver(item["match"], source="collector")
+            log(f"  🧩 경기 {game_id} 상세(아이템·룬·오브젝트) 보강 후 다시 업로드: " + describe_upload(status, result))
+        elif item["tries"] >= ENRICH_MAX_TRIES:
+            del _pending_enrich[game_id]
+            log(f"  ℹ️  경기 {game_id} 상세 보강 포기 (매치 기록에 아직 없음) — 기본 기록은 이미 올라가 있음")
 
 
 PHASE_NAMES = {
@@ -910,7 +993,9 @@ def realtime_loop(stop_event, set_status):
                 break
             continue
 
-        # 대기 상태
+        # 대기 상태 — 보강 대기 중인 경기가 있으면 처리
+        if _pending_enrich:
+            process_pending_enrich(lock_info)
         was_in_game = False
         if stop_event.wait(POLL_INTERVAL):
             break
@@ -1073,9 +1158,11 @@ def format_history_match(game):
             "firstBlood": stats.get("firstBloodKill", False),
             "largestMultiKill": stats.get("largestMultiKill", 0),
         }
+        player.update(loadout_from_history(p))
         players.append(player)
 
     return {
+        "objectives": objectives_from_history(game),
         "gameId": game.get("gameId"),
         "gameCreation": game.get("gameCreation"),  # 실제 게임 시작 시각 (epoch ms)
         "gameDuration": format_duration(game.get("gameDuration", 0)),

@@ -39,6 +39,12 @@ export interface IncomingPlayer {
   tagLine?: string;
   /** 업로드 시점의 솔랭 티어 (예: "다이아 2"). 기록만 하고 팀 밸런스에는 자동으로 쓰지 않음 */
   soloTier?: string;
+  items?: number[];
+  spell1Id?: number;
+  spell2Id?: number;
+  perkKeystone?: number;
+  perkPrimaryStyle?: number;
+  perkSubStyle?: number;
 }
 
 export interface IncomingMatch {
@@ -52,11 +58,36 @@ export interface IncomingMatch {
   gameDuration: string;
   gameMode: string;
   bans: { blue: string[]; red: string[] } | null;
+  objectives?: { blue: TeamObjectivesIn; red: TeamObjectivesIn } | null;
   source: MatchSource;
   reviewStatus: "duplicate_candidate" | null;
   duplicateOf: string | null;
   excludedReason?: string | null;
   players: IncomingPlayer[];
+}
+
+export interface TeamObjectivesIn {
+  towers: number;
+  inhibitors: number;
+  dragons: number;
+  barons: number;
+  heralds: number;
+}
+
+/** 팀 오브젝트 — 수집기는 match.objectives, DB 행·백업은 bans.objectives 에 들어 있다 */
+function parseObjectives(v: unknown): IncomingMatch["objectives"] {
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  if (!isObj(v) || !isObj(v.blue) || !isObj(v.red)) return null;
+  const side = (o: Obj): TeamObjectivesIn => ({
+    towers: num(o.towers), inhibitors: num(o.inhibitors), dragons: num(o.dragons), barons: num(o.barons), heralds: num(o.heralds),
+  });
+  return { blue: side(v.blue), red: side(v.red) };
 }
 
 export interface IncomingMember {
@@ -132,6 +163,14 @@ function parsePlayer(p: Obj, index: number, total: number): IncomingPlayer {
   for (const k of ["puuid", "tagLine", "soloTier"] as const) {
     if (typeof p[k] === "string" && (p[k] as string).trim()) out[k] = (p[k] as string).trim().slice(0, 100);
   }
+  if (Array.isArray(p.items)) {
+    const items = p.items.slice(0, 7).map((x) => Math.max(0, Math.trunc(Number(x) || 0)));
+    if (items.some((x) => x > 0)) out.items = items;
+  }
+  for (const k of ["spell1Id", "spell2Id", "perkKeystone", "perkPrimaryStyle", "perkSubStyle"] as const) {
+    const n = Number(p[k]);
+    if (Number.isFinite(n) && n > 0) out[k] = Math.trunc(n);
+  }
   return out;
 }
 
@@ -199,6 +238,7 @@ function parseRow(r: Obj, errors: string[]): IncomingMatch | null {
     gameDuration: String(r.game_duration ?? ""),
     gameMode: String(r.game_mode ?? "rift"),
     bans: parseBans(r.bans),
+    objectives: parseObjectives(isObj(r.bans) ? (r.bans as Obj).objectives : typeof r.bans === "string" ? (() => { try { return JSON.parse(r.bans as string).objectives; } catch { return null; } })() : null),
     source,
     reviewStatus: r.review_status === "duplicate_candidate" ? "duplicate_candidate" : null,
     duplicateOf: r.duplicate_of ? String(r.duplicate_of) : null,
@@ -218,6 +258,7 @@ function parseCollector(m: Obj, source: MatchSource): IncomingMatch | null {
     gameDuration: String(m.gameDuration ?? ""),
     gameMode: String(m.gameMode ?? "rift"),
     bans: parseBans(m.bans),
+    objectives: parseObjectives(m.objectives),
     source,
     reviewStatus: null,
     duplicateOf: null,

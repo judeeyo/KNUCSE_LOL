@@ -184,5 +184,19 @@ assert.ok(s.members.find((m) => m.nickname === "계정2").aliases.includes("새�
 assert.equal(s.members.some((m) => m.nickname === "새닉네임#KR1"), false);
 step("닉네임 변경 → 같은 puuid 로 예전 닉네임에 이어 붙임 + 부캐 등록, 솔랭 티어 기록");
 
+// 11. 아이템·주문·룬·팀 오브젝트 저장 (오브젝트는 bans 열의 objectives 에)
+const full = withIds(9200001, false);
+full.objectives = { blue: { towers: 9, inhibitors: 2, dragons: 3, barons: 1, heralds: 1 }, red: { towers: 2, inhibitors: 0, dragons: 1, barons: 0, heralds: 0 } };
+full.players = full.players.map((p, i) => ({ ...p, items: [3089, 3020, 0, 0, 0, 0, 3340], spell1Id: 4, spell2Id: i % 2 ? 11 : 14, perkKeystone: 8112, perkPrimaryStyle: 8100, perkSubStyle: 8300 }));
+r = await upload(full);
+assert.equal(r.body.status, "inserted");
+s = await state();
+const stored = s.matches.find((m) => m.game_id === "9200001");
+assert.deepEqual(stored.bans.objectives, full.objectives);
+assert.deepEqual(stored.players[0].items, [3089, 3020, 0, 0, 0, 0, 3340]);
+assert.equal(stored.players[1].spell2Id, 11);
+assert.equal(stored.players[0].perkKeystone, 8112);
+step("아이템·주문·룬·팀 오브젝트 저장");
+
 await fetch(MOCK + "/__mock/reset", { method: "POST" });
 console.log("OK: API 흐름 검증 완료");

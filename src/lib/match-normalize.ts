@@ -14,7 +14,7 @@ export interface MatchRow {
   game_duration?: string | null;
   game_mode?: string | null;
   game_id?: string | null;
-  bans?: { blue?: string[]; red?: string[] } | null;
+  bans?: { blue?: string[]; red?: string[]; objectives?: Match["objectives"] } | null;
   players: unknown;
   source?: string | null;
   time_unknown?: boolean | null;
@@ -66,7 +66,7 @@ export function normalizePlayers(raw: unknown): { players: PlayerStat[]; missing
 }
 
 export function normalizeBans(bans: MatchRow["bans"]): Match["bans"] | undefined {
-  if (!bans) return undefined;
+  if (!bans || !((bans.blue || []).length || (bans.red || []).length)) return undefined;
   return {
     blue: (bans.blue || []).map(normalizeChampionName),
     red: (bans.red || []).map(normalizeChampionName),
@@ -82,6 +82,7 @@ export function rowToMatch(row: MatchRow): Match {
     gameDuration: row.game_duration || "",
     players,
     bans: normalizeBans(row.bans),
+    objectives: row.bans?.objectives?.blue && row.bans.objectives.red ? row.bans.objectives : undefined,
     source: (row.source as MatchSource) || undefined,
     gameId: row.game_id || undefined,
     timeUnknown: Boolean(row.time_unknown),

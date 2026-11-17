@@ -33,6 +33,15 @@ export interface Match {
   timeUnknown?: boolean; // true면 날짜만 신뢰 (시각 미상)
   missing?: MissingStats; // 이 경기에서 수집되지 않은 지표
   excludedReason?: string; // 있으면 "없던 경기" — 어떤 통계에도 반영하지 않고 이 문구를 표시
+  objectives?: { blue: TeamObjectives; red: TeamObjectives }; // 팀 오브젝트 (수집기 새 버전부터)
+}
+
+export interface TeamObjectives {
+  towers: number;
+  inhibitors: number;
+  dragons: number;
+  barons: number;
+  heralds: number;
 }
 
 export type MatchSource = "collector" | "history" | "manual" | "legacy-import" | "backup-import";
@@ -81,5 +90,12 @@ export interface PlayerStat {
   puuid?: string;
   tagLine?: string;
   soloTier?: string; // 업로드 시점 솔랭 티어 — 기록용, 팀 밸런스에는 자동으로 쓰지 않음
+  // 아이템·주문·룬 (수집기 새 버전부터)
+  items?: number[]; // 0~5 아이템, 6 장신구 (0 = 빈 칸)
+  spell1Id?: number;
+  spell2Id?: number;
+  perkKeystone?: number;
+  perkPrimaryStyle?: number;
+  perkSubStyle?: number;
 }
 

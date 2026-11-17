@@ -222,9 +222,15 @@ export async function ingestMatches(
       players,
       source: inc.source,
       time_unknown: inc.timeUnknown,
-      bans: inc.bans
-        ? { blue: inc.bans.blue.map(normalizeChampionName), red: inc.bans.red.map(normalizeChampionName) }
-        : null,
+      // bans 열 = 경기 부가 정보: 밴 + 팀 오브젝트 (새 열을 만들지 않으려고 같은 JSON 에 둔다)
+      bans:
+        inc.bans || inc.objectives
+          ? {
+              blue: (inc.bans?.blue || []).map(normalizeChampionName),
+              red: (inc.bans?.red || []).map(normalizeChampionName),
+              ...(inc.objectives ? { objectives: inc.objectives } : {}),
+            }
+          : null,
     };
     if (inc.gameId) row.game_id = inc.gameId;
     if (inc.createdAt) row.created_at = inc.createdAt;

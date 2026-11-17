@@ -312,3 +312,22 @@ describe("계정 정보 보존", () => {
     expect(parseImportPayload(asCollector(legacyRows[0], 2), "collector").matches[0].players[0].puuid).toBeUndefined();
   });
 });
+
+describe("아이템·주문·룬·팀 오브젝트", () => {
+  const obj = { blue: { towers: 9, inhibitors: 2, dragons: 3, barons: 1, heralds: 1 }, red: { towers: 2, inhibitors: 0, dragons: 1, barons: 0, heralds: 0 } };
+  it("수집기 자료에서 읽는다", () => {
+    const one = { ...asCollector(legacyRows[0], 1), objectives: obj };
+    one.players[0] = { ...one.players[0], items: [3089, 3020, 0, 0, 0, 0, 3340], spell1Id: 4, spell2Id: 14, perkKeystone: 8112, perkSubStyle: 8300 };
+    const m = parseImportPayload(one, "collector").matches[0];
+    expect(m.objectives).toEqual(obj);
+    expect(m.players[0]).toMatchObject({ items: [3089, 3020, 0, 0, 0, 0, 3340], spell1Id: 4, spell2Id: 14, perkKeystone: 8112, perkSubStyle: 8300 });
+    expect(m.players[1].items).toBeUndefined();
+  });
+  it("DB 행·백업에서는 bans.objectives 로 읽고, 화면용 경기에도 나온다", () => {
+    const row = { ...legacyRows[0], bans: { blue: [], red: [], objectives: obj } };
+    expect(parseImportPayload({ format: "naejeon-backup", matches: [row] }).matches[0].objectives).toEqual(obj);
+    const match = rowToMatch(row as never);
+    expect(match.objectives).toEqual(obj);
+    expect(match.bans).toBeUndefined(); // 밴이 비어 있으면 밴 없음으로
+  });
+});

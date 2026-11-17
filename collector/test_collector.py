@@ -225,14 +225,20 @@ class CollectorTest(unittest.TestCase):
                     return {"gameId": gid, "mapId": 12, "participants": [], "participantIdentities": []}
                 return {
                     "gameId": gid, "gameCreation": 1780000000000 + gid, "gameDuration": 1805, "gameMode": "CLASSIC", "mapId": 11,
-                    "teams": [{"teamId": 100, "bans": [{"championId": 1, "pickTurn": 1}]}, {"teamId": 200, "bans": []}],
+                    "teams": [
+                        {"teamId": 100, "bans": [{"championId": 1, "pickTurn": 1}], "towerKills": 9, "inhibitorKills": 2, "dragonKills": 3, "baronKills": 1, "riftHeraldKills": 1},
+                        {"teamId": 200, "bans": [], "towerKills": 2, "inhibitorKills": 0, "dragonKills": 1, "baronKills": 0, "riftHeraldKills": 0},
+                    ],
                     "participantIdentities": [{"participantId": i + 1, "player": {"gameName": f"n{i}", "puuid": f"p-{i}", "tagLine": "KR1"}} for i in range(10)],
                     "participants": [{
                         "participantId": i + 1, "teamId": 100 if i < 5 else 200, "championId": 103,
+                        "spell1Id": 4, "spell2Id": 14,
                         "timeline": {"lane": "MIDDLE", "role": "SOLO"},
                         "stats": {"win": i < 5, "kills": i, "deaths": 2, "assists": 3, "totalMinionsKilled": 150,
                                   "neutralMinionsKilled": 10, "goldEarned": 10000, "totalDamageDealtToChampions": 15000,
-                                  "totalDamageTaken": 9000, "visionScore": 25},
+                                  "totalDamageTaken": 9000, "visionScore": 25,
+                                  "item0": 3089, "item1": 3020, "item2": 0, "item3": 0, "item4": 0, "item5": 0, "item6": 3340,
+                                  "perk0": 8112, "perkPrimaryStyle": 8100, "perkSubStyle": 8300},
                     } for i in range(10)],
                 }
             return None
@@ -321,6 +327,45 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual((p0["puuid"], p0["tagLine"], p0["soloTier"]), ("p-0", "KR1", "다이아 2"))
         self.assertEqual(p1["soloTier"], "마스터")
         self.assertNotIn("soloTier", p2)  # 언랭은 기록하지 않음
+
+    def test_history_records_items_spells_runes_and_objectives(self):
+        self._fake_lcu([{"gameId": 92, "queueId": 0}])
+        match, _ = collector.build_history_match({}, {"gameId": 92})
+        p0 = match["players"][0]
+        self.assertEqual(p0["items"], [3089, 3020, 0, 0, 0, 0, 3340])
+        self.assertEqual((p0["spell1Id"], p0["spell2Id"]), (4, 14))
+        self.assertEqual((p0["perkKeystone"], p0["perkPrimaryStyle"], p0["perkSubStyle"]), (8112, 8100, 8300))
+        self.assertEqual(match["objectives"], {
+            "blue": {"towers": 9, "inhibitors": 2, "dragons": 3, "barons": 1, "heralds": 1},
+            "red": {"towers": 2, "inhibitors": 0, "dragons": 1, "barons": 0, "heralds": 0},
+        })
+
+    def test_eog_loadout_and_late_enrichment(self):
+        # 게임 직후: 종료 화면 데이터에 아이템이 있으면 쓰고, 매치 상세가 아직 없으면 대기열에 넣었다가 나중에 보강·재업로드
+        collector.set_upload_token(TOKEN)
+        self.assertEqual(collector.loadout_from_eog({"items": [1, 2, 3], "spell1Id": 4, "stats": {"PERK0": 8010}}),
+                         {"items": [1, 2, 3, 0, 0, 0, 0], "spell1Id": 4, "perkKeystone": 8010})
+        players = [{"summonerName": f"n{i}", "championName": "Ahri", "stats": {}} for i in range(10)]
+        eog = {"gameId": 93, "gameLength": 1805, "teams": [
+            {"isWinningTeam": True, "players": players[:5]}, {"isWinningTeam": False, "players": players[5:]}]}
+        self._fake_lcu([{"gameId": 93, "queueId": 0}])
+        real_full = collector.get_full_game
+        collector.get_full_game = lambda lock, gid: None  # 아직 매치 기록에 없음
+        collector.get_eog_stats = lambda lock: eog
+        collector.is_custom_game = lambda lock: True
+        try:
+            collector.handle_end_of_game({}, None)
+        finally:
+            collector.get_full_game = real_full
+        self.assertIn(93, collector._pending_enrich)
+        self.assertNotIn("objectives", FakeSite.received[-1]["match"])
+        collector._pending_enrich[93]["next"] = 0
+        collector.process_pending_enrich({})
+        self.assertNotIn(93, collector._pending_enrich)
+        last = FakeSite.received[-1]["match"]
+        self.assertEqual(last["gameId"], 93)
+        self.assertEqual(last["objectives"]["blue"]["towers"], 9)
+        self.assertEqual(last["players"][0]["items"][0], 3089)
 
     def test_solo_tier_parsing(self):
         f = collector.solo_tier_from_ranked

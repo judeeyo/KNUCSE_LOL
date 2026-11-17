@@ -1106,6 +1106,14 @@ export interface DuoRecord {
   player1Wins: number; // player1이 이긴 횟수 (상대 기록)
 }
 
+/**
+ * 블루/레드 진영이 확실한 경기인지. 예전 사이트에서 옮긴 수기 기록(legacy-import)은 원본에 "팀1/팀2"로만
+ * 적혀 있어 실제 진영을 알 수 없다 (나중에 Riot 데이터와 합쳐진 경기는 source 가 바뀌어 확실한 것으로 취급).
+ */
+export function isSideKnown(m: Match): boolean {
+  return m.source !== "legacy-import";
+}
+
 export function buildTeamSideStats(group: Group) {
   // Overall blue vs red
   let blueWins = 0;

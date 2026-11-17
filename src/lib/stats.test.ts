@@ -543,3 +543,12 @@ describe("최근 참가 보정", async () => {
     expect(stats.find((s) => s.nickname === "b")!.lastPlayedAt).toBe("2026-06-01T00:00:00Z");
   });
 });
+
+describe("진영이 확실한 경기", async () => {
+  const { isSideKnown } = await import("./stats");
+  it("수기 기록만 제외", () => {
+    const m = match([ps({ nickname: "a", team: "blue", win: true }), ps({ nickname: "b", team: "red", win: false })]);
+    expect(isSideKnown({ ...m, source: "legacy-import" })).toBe(false);
+    for (const s of ["collector", "history", "manual", "backup-import", undefined] as const) expect(isSideKnown({ ...m, source: s })).toBe(true);
+  });
+});

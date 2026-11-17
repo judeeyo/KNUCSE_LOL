@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
-import { buildTeamSideStats, type PlayerTeamSide, type ChampionTeamSide, type TeamSideOverall } from "@/lib/stats";
+import { buildTeamSideStats, isSideKnown, type PlayerTeamSide, type ChampionTeamSide, type TeamSideOverall } from "@/lib/stats";
 import { ChampionIcon } from "@/components/ui/champion-icon";
 import type { Group } from "@/lib/types";
 
@@ -10,7 +10,10 @@ type SubTab = "overview" | "players" | "champions";
 
 export function TeamSideTab({ group }: { group: Group }) {
   const [sub, setSub] = useState<SubTab>("overview");
-  const data = useMemo(() => buildTeamSideStats(group), [group]);
+  // 진영이 확실한 경기만 집계 (수기 기록은 실제 블루/레드를 알 수 없음)
+  const known = useMemo(() => group.matches.filter(isSideKnown), [group]);
+  const skipped = group.matches.length - known.length;
+  const data = useMemo(() => buildTeamSideStats({ ...group, matches: known }), [group, known]);
 
   return (
     <div className="space-y-5">
@@ -33,7 +36,12 @@ export function TeamSideTab({ group }: { group: Group }) {
         ))}
       </div>
 
-      {sub === "overview" && <OverviewSection overall={data.overall} totalMatches={group.matches.length} />}
+      <p className="text-xs text-ink-tertiary break-keep">
+        진영이 확인된 <span className="text-ink-subtle">{known.length}경기</span> 기준입니다.
+        {skipped > 0 && <> 예전 사이트에서 옮긴 수기 기록 {skipped}경기는 원본에 실제 블루/레드가 없어 제외했습니다.</>}
+      </p>
+
+      {sub === "overview" && <OverviewSection overall={data.overall} totalMatches={known.length} />}
       {sub === "players" && <PlayersSection players={data.players} />}
       {sub === "champions" && <ChampionsSection champions={data.champions} />}
     </div>

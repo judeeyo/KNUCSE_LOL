@@ -1,0 +1,138 @@
+@import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+
+:root {
+  /* ─── Linear Surface Ladder ─── */
+  --canvas: #010102;
+  --surface-1: #0f1011;
+  --surface-2: #141516;
+  --surface-3: #18191a;
+  --surface-4: #191a1b;
+
+  /* ─── Hairline ─── */
+  --hairline: #23252a;
+  --hairline-strong: #34343a;
+  --hairline-tertiary: #3e3e44;
+
+  /* ─── Ink ─── */
+  --ink: #f7f8f8;
+  --ink-muted: #d0d6e0;
+  --ink-subtle: #8a8f98;
+  --ink-tertiary: #62666d;
+
+  /* ─── Brand ─── */
+  --primary: #5e6ad2;
+  --primary-hover: #828fff;
+  --primary-focus: rgba(94, 105, 209, 0.5);
+
+  /* ─── Semantic ─── */
+  --win: #27a644;
+  --lose: #e05555;
+  --mvp: #e8a020;
+  --ace: #9b6dd7;
+  --gold: #e8a020;
+}
+
+@theme inline {
+  /* Surface */
+  --color-canvas: var(--canvas);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+
+  /* Hairline */
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-hairline-tertiary: var(--hairline-tertiary);
+
+  /* Ink */
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-tertiary: var(--ink-tertiary);
+
+  /* Brand */
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+
+  /* Semantic */
+  --color-win: var(--win);
+  --color-lose: var(--lose);
+  --color-mvp: var(--mvp);
+  --color-ace: var(--ace);
+  --color-gold: var(--gold);
+
+  /* Fonts */
+  --font-sans: "Pretendard Variable", "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Fira Code", "Consolas", monospace;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) var(--canvas);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Transitions ─── */
+.transition-fast {
+  transition: all 0.12s ease;
+}
+
+/* ─── Panel (surface-1 + hairline) ─── */
+.panel {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+}
+
+/* ─── Card hover ─── */
+.card-hover:hover {
+  background: var(--surface-2);
+  border-color: var(--hairline-strong);
+}
+
+/* ─── Drop zone ─── */
+.drop-zone {
+  border: 2px dashed var(--hairline-strong);
+}
+.drop-zone.active,
+.drop-zone:hover {
+  border-color: var(--primary);
+  background: rgba(94, 106, 210, 0.06);
+}
+
+/* ─── MVP / ACE badges ─── */
+.badge-mvp {
+  background: var(--mvp);
+  color: #010102;
+  font-weight: 600;
+}
+.badge-ace {
+  background: var(--ace);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ─── Rank ─── */
+.rank-1 { color: var(--gold); }
+.rank-2 { color: var(--ink-subtle); }
+.rank-3 { color: #b07040; }
+
+/* ─── Section header ─── */
+.section-bar {
+  background: var(--canvas);
+  border-bottom: 1px solid var(--hairline);
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}

@@ -13,6 +13,7 @@
     "sql:build": "node scripts/build-legacy-sql.mjs",
     "sql:check": "node scripts/build-legacy-sql.mjs --check",
     "mock:db": "node scripts/dev/mock-supabase.mjs",
+    "preview": "bash scripts/dev/preview.sh",
     "verify:api": "node scripts/dev/e2e-api.mjs",
     "verify:responsive": "node scripts/dev/check-responsive.mjs"
   },

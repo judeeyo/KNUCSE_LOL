@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { resolveSupabaseUrl } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
 // 배포 점검용. 비밀값·키 일부·선수 정보는 노출하지 않고 "설정 여부"와 건수만 알려준다.
 export async function GET() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = resolveSupabaseUrl();
   const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const env = {
     NEXT_PUBLIC_SUPABASE_URL: Boolean(url),

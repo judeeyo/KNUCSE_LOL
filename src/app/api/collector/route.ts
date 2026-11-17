@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { checkAdmin } from "@/lib/server/auth";
 
 export async function GET(req: NextRequest) {
+  // ?withToken=1 + 관리자 비밀번호: 업로드 토큰을 넣은 수집기 (설치 후 아무것도 입력할 필요 없음).
+  // 그 외(공개 다운로드)에는 비밀값이 들어가지 않는다.
+  const withToken = req.nextUrl.searchParams.get("withToken") === "1";
+  if (withToken) {
+    const auth = checkAdmin(req);
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+    if (!process.env.UPLOAD_SECRET || process.env.UPLOAD_SECRET.length < 8) {
+      return NextResponse.json({ error: "서버에 UPLOAD_SECRET 이 설정되지 않았습니다" }, { status: 503 });
+    }
+  }
+
   // 호스트 헤더는 요청자가 조작할 수 있으므로 형식을 검증한 뒤에만 스크립트에 넣는다
   const rawHost = req.headers.get("host") || "localhost:3000";
   const host = /^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(rawHost) ? rawHost : "localhost:3000";
@@ -27,6 +39,10 @@ export async function GET(req: NextRequest) {
     'SERVER_URL = "https://your-site.vercel.app"',
     `SERVER_URL = ${JSON.stringify(serverUrl)}`
   );
+
+  if (withToken) {
+    pyContent = pyContent.replace('EMBEDDED_UPLOAD_TOKEN = ""', `EMBEDDED_UPLOAD_TOKEN = ${JSON.stringify(process.env.UPLOAD_SECRET)}`);
+  }
 
   const files = [{ name: "naejeon-collector.py", data: Buffer.from(pyContent, "utf-8") }];
   const extras: [string, string][] = [
@@ -57,7 +73,7 @@ export async function GET(req: NextRequest) {
   return new NextResponse(new Uint8Array(zip), {
     headers: {
       "Content-Type": "application/zip",
-      "Content-Disposition": 'attachment; filename="naejeon-collector.zip"',
+      "Content-Disposition": `attachment; filename="${withToken ? "naejeon-collector-ready.zip" : "naejeon-collector.zip"}"`,
       "Cache-Control": "no-store",
     },
   });

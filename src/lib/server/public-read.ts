@@ -42,6 +42,34 @@ export async function readCountedMatches(): Promise<Match[] | null> {
   }
 }
 
+/** 수집기가 "아는 사람들의 내전인지" 확인할 때 쓰는 명단: 선수 닉네임·부캐·경기에 나온 계정 ID */
+export async function readRoster(): Promise<{ names: string[]; puuids: string[] } | null> {
+  const sb = client();
+  if (!sb) return null;
+  try {
+    const [m, mem] = await Promise.all([
+      sb.from("matches").select("players").eq("group_name", GROUP_NAME),
+      sb.from("members").select("nickname, aliases"),
+    ]);
+    if (m.error || mem.error) return null;
+    const names = new Set<string>();
+    const puuids = new Set<string>();
+    for (const row of mem.data || []) {
+      names.add(row.nickname);
+      for (const a of (row.aliases as string[]) || []) names.add(a);
+    }
+    for (const row of m.data || []) {
+      for (const p of (row.players as Array<{ nickname?: string; puuid?: string }>) || []) {
+        if (p.nickname) names.add(p.nickname);
+        if (p.puuid) puuids.add(p.puuid);
+      }
+    }
+    return { names: [...names], puuids: [...puuids] };
+  } catch {
+    return null;
+  }
+}
+
 /** 공유 문구용 날짜 (한국 날짜) */
 export function koreanDate(iso: string): string {
   const d = new Date(Date.parse(iso) + 9 * 3600 * 1000);

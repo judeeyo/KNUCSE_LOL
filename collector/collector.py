@@ -36,6 +36,11 @@ SERVER_URL = "https://your-site.vercel.app"  # 사이트에서 내려받으면 �
 # 업로드 토큰(서버의 UPLOAD_SECRET)은 이 파일에 넣지 않는다.
 # 처음 실행할 때 한 번 입력하면 이 PC의 설정 파일(collector_config.json)에만 저장된다.
 APP_NAME = "naejeon-collector"
+# 관리 화면의 "토큰 포함 수집기"로 내려받으면 업로드 토큰이 여기 채워진다 (공개 다운로드에는 비어 있음)
+EMBEDDED_UPLOAD_TOKEN = ""
+# 다른 사람들과 한 5대5 커스텀이 올라가지 않도록: 10명 중 이만큼 이상이 사이트에 등록된 멤버일 때만 업로드
+ROSTER_MIN_KNOWN = 5
+HISTORY_SYNC_INTERVAL = 6 * 3600  # 같은 계정의 과거 경기 자동 동기화 간격 (초)
 SINGLE_INSTANCE_PORT = 47631
 RETRY_PENDING_INTERVAL = 300  # 전송 대기 건 자동 재전송 간격 (초)
 POLL_INTERVAL = 5  # 클라이언트 감지 간격 (초)
@@ -112,7 +117,7 @@ def save_config(cfg):
 
 def get_upload_token():
     """업로드 토큰: 환경변수 NAEJEON_UPLOAD_TOKEN > 설정 파일"""
-    return (os.environ.get("NAEJEON_UPLOAD_TOKEN") or load_config().get("upload_token") or "").strip()
+    return (os.environ.get("NAEJEON_UPLOAD_TOKEN") or load_config().get("upload_token") or EMBEDDED_UPLOAD_TOKEN or "").strip()
 
 
 def set_upload_token(token):
@@ -213,6 +218,116 @@ def attach_solo_tiers(lock_info, match_data):
             tier = None
         if tier:
             p["soloTier"] = tier
+
+
+# ─── 멤버 확인 (다른 무리와 한 커스텀 거르기) ───
+
+_roster_cache = {"at": 0.0, "names": None, "puuids": None}
+
+
+def fetch_roster(force=False):
+    """사이트에 등록된 멤버 닉네임·부캐·계정 ID. 받을 수 없으면 None (그때는 거르지 않는다)"""
+    if not force and _roster_cache["names"] is not None and time.time() - _roster_cache["at"] < 600:
+        return _roster_cache
+    try:
+        with urllib.request.urlopen(f"{get_server_url()}/api/roster", timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        _roster_cache.update(at=time.time(), names=set(data.get("names") or []), puuids=set(data.get("puuids") or []))
+        return _roster_cache
+    except Exception:
+        return None
+
+
+def roster_check(match_data):
+    """(올려도 되는지, 아는 사람 수). 명단을 못 받았거나 명단이 비어 있으면(새 사이트) 올린다"""
+    roster = fetch_roster()
+    if not roster or not roster["names"]:
+        return True, None
+    known = sum(
+        1 for p in match_data.get("players", [])
+        if p.get("nickname") in roster["names"] or (p.get("puuid") and p.get("puuid") in roster["puuids"])
+    )
+    return known >= ROSTER_MIN_KNOWN, known
+
+
+def skipped_dir():
+    """멤버가 아닌 사람들과 한 커스텀 (올리지 않고 보관만)"""
+    return _subdir("not-uploaded")
+
+
+def keep_unuploaded(match_data, known):
+    try:
+        path = os.path.join(skipped_dir(), _match_file_name(match_data))
+        _write_json_atomic(path, match_data)
+    except OSError:
+        path = None
+    log(f"  ⏭️  등록된 멤버가 {known}명뿐이라 내전이 아닌 것으로 보고 올리지 않았습니다 (PC에만 보관: not-uploaded 폴더)")
+    return path
+
+
+# ─── 과거 경기 자동 동기화 ───
+
+def _synced_path():
+    return os.path.join(get_data_dir(), "synced_games.json")
+
+
+def load_synced():
+    try:
+        with open(_synced_path(), "r", encoding="utf-8") as f:
+            return set(str(x) for x in json.load(f))
+    except (OSError, ValueError):
+        return set()
+
+
+def save_synced(ids):
+    try:
+        _write_json_atomic(_synced_path(), sorted(ids))
+    except OSError:
+        pass
+
+
+def auto_sync_history(lock_info, force=False):
+    """롤에 로그인한 계정의 과거 내전 중 아직 안 올린 것을 올린다. (올린 수, 건너뛴 수) 반환.
+    같은 계정은 HISTORY_SYNC_INTERVAL 마다 한 번만. 한 번 처리한 경기는 synced_games.json 에 기억한다."""
+    puuid = get_current_puuid(lock_info) or "unknown"
+    cfg = load_config()
+    last = (cfg.get("history_synced_at") or {}).get(puuid, 0)
+    if not force and time.time() - last < HISTORY_SYNC_INTERVAL:
+        return 0, 0
+    if not get_upload_token():
+        return 0, 0
+
+    synced = load_synced()
+    games = [g for g in fetch_custom_games(lock_info) if str(g.get("gameId")) not in synced]
+    uploaded = skipped = 0
+    if games:
+        log(f"  🔄 과거 경기 자동 동기화: 확인할 커스텀 게임 {len(games)}개")
+        naejeon, excluded = classify_custom_games(lock_info, games)
+        for g, _ in excluded:
+            synced.add(str(g.get("gameId")))  # 내전이 아님 — 다시 볼 필요 없음
+        for g in naejeon:
+            match_data, raw = build_history_match(lock_info, g)
+            if not match_data:
+                continue
+            ok, known = roster_check(match_data)
+            if not ok:
+                keep_unuploaded(match_data, known)
+                synced.add(str(g.get("gameId")))
+                skipped += 1
+                continue
+            status, result = deliver(match_data, source="history", raw=raw)
+            if status in ("ok", "rejected"):
+                synced.add(str(g.get("gameId")))
+            if status == "ok":
+                uploaded += 1
+            elif status in ("retry", "no_token"):
+                break  # 서버 문제 — 다음 동기화 때 이어서
+        save_synced(synced)
+        log(f"  🔄 과거 경기 자동 동기화 완료: 올림 {uploaded}건, 멤버가 아니라 건너뜀 {skipped}건")
+    cfg = load_config()
+    cfg.setdefault("history_synced_at", {})[puuid] = time.time()
+    save_config(cfg)
+    return uploaded, skipped
 
 
 def deliver(match_data, source="collector", raw=None):
@@ -878,6 +993,12 @@ def handle_end_of_game(lock_info, last_game_id):
 
     attach_solo_tiers(lock_info, match_data)
 
+    ok, known = roster_check(match_data)
+    if not ok:
+        keep_unuploaded(match_data, known)
+        _pending_enrich.pop(game_id, None)
+        return game_id
+
     # 로컬 백업 → 업로드 (실패해도 백업과 전송 대기열에 남는다)
     log("  💾 로컬 백업 후 서버에 업로드 중...")
     status, result = deliver(match_data, source="collector", raw=eog)
@@ -933,6 +1054,7 @@ def realtime_loop(stop_event, set_status):
     was_in_game = False
     client_found = False
     last_phase = "__init__"
+    history_due = False
     next_retry = 0.0  # 시작하자마자 한 번 재전송 시도
 
     while not stop_event.is_set():
@@ -956,6 +1078,8 @@ def realtime_loop(stop_event, set_status):
         if not client_found:
             log("  ✅ 롤 클라이언트 감지 완료")
             client_found = True
+            history_due = True
+
 
         # 2. 게임 상태 확인
         phase = get_game_phase(lock_info)
@@ -996,6 +1120,15 @@ def realtime_loop(stop_event, set_status):
         # 대기 상태 — 보강 대기 중인 경기가 있으면 처리
         if _pending_enrich:
             process_pending_enrich(lock_info)
+        # 롤에 로그인하면 아직 안 올린 과거 내전을 자동으로 올림 (게임 중이 아닐 때)
+        if history_due and phase not in IN_GAME_PHASES and get_current_puuid(lock_info):
+            history_due = False
+            set_status("과거 내전 확인 중...")
+            try:
+                auto_sync_history(lock_info)
+            except Exception as e:
+                log(f"  ⚠️  과거 경기 동기화 중 오류: {e}")
+            set_status("게임 시작을 기다리는 중")
         was_in_game = False
         if stop_event.wait(POLL_INTERVAL):
             break
@@ -1382,13 +1515,16 @@ class CollectorGUI:
             self.log(f"전송 대기 중인 경기 {waiting}건 — 실시간 수집을 시작하면 자동으로 재전송합니다.")
         root.after(100, self._poll_queue)
 
+        # 실행하면 알아서: 자동 실행 등록 → 수집 시작 → (롤 로그인 시) 과거 내전 동기화
+        self._ensure_autostart()
         if background:
-            # 자동 실행: 창은 작업 표시줄에 최소화해 두고 바로 수집 시작 (버튼을 누를 필요 없음)
-            self.log("백그라운드 모드로 시작했습니다. 롤 경기가 끝나면 자동으로 업로드합니다.")
             root.iconify()
-            root.after(300, self.toggle_realtime)
+        root.after(300, self.toggle_realtime)
+        if get_upload_token():
+            self.log("준비 완료 — 이 창은 닫지 말고 두세요(최소화 가능). 롤 내전이 끝나면 자동으로 올라갑니다.")
+            threading.Thread(target=self._startup_check, daemon=True).start()
         else:
-            self.log("[실시간 수집 시작] 버튼을 누르면 게임 종료 시 자동으로 업로드됩니다.")
+            root.after(600, self.ask_token)
 
     # ─── 스타일 ───
 
@@ -1482,9 +1618,9 @@ class CollectorGUI:
         inner = tk.Frame(tab, bg=C_PANEL2)
         inner.pack(fill="both", expand=True, padx=24, pady=20)
 
-        tk.Label(inner, text="게임이 끝나면 자동으로 서버에 업로드합니다.",
+        tk.Label(inner, text="실행만 해 두면 내전이 끝날 때마다 자동으로 올라갑니다. 누를 버튼은 없습니다.",
                  bg=C_PANEL2, fg=C_MUTED, font=("맑은 고딕", 10)).pack(anchor="w")
-        tk.Label(inner, text="내전 하는 동안 켜두기만 하면 됩니다. (커스텀 게임만 업로드)",
+        tk.Label(inner, text="롤에 로그인하면 아직 안 올린 과거 내전도 알아서 올립니다. (등록된 멤버 5명 이상인 5대5만)",
                  bg=C_PANEL2, fg=C_MUTED, font=("맑은 고딕", 10)).pack(anchor="w", pady=(2, 14))
 
         row = tk.Frame(inner, bg=C_PANEL2)
@@ -1773,6 +1909,7 @@ class CollectorGUI:
         set_upload_token(token)
         self.log("업로드 토큰을 저장했습니다. 연결을 확인합니다...")
         self.check_connection_clicked()
+        self.log("준비 완료 — 이 창은 닫지 말고 두세요(최소화 가능). 롤 내전이 끝나면 자동으로 올라갑니다.")
 
     def check_connection_clicked(self):
         def work():
@@ -1797,8 +1934,25 @@ class CollectorGUI:
         except Exception:
             self.log(f"백업 폴더: {path}")
 
+    def _ensure_autostart(self):
+        """처음 실행할 때 Windows 로그인 시 자동 실행을 알아서 등록 (사용자가 끈 적이 있으면 그대로 둠)"""
+        try:
+            if not is_autostart_installed() and not load_config().get("autostart_disabled"):
+                install_autostart()
+                self.autostart_var.set(True)
+                self.log("Windows 로그인 시 자동 실행을 등록했습니다. 다음부터는 PC를 켜면 알아서 켜집니다.")
+        except Exception as e:
+            self.log(f"⚠️  자동 실행 등록 실패: {e}")
+
+    def _startup_check(self):
+        ok, msg = check_connection()
+        self.log_from_thread(("✅ " if ok else "❌ ") + msg)
+
     def toggle_autostart(self):
         try:
+            cfg = load_config()
+            cfg["autostart_disabled"] = not self.autostart_var.get()
+            save_config(cfg)
             if self.autostart_var.get():
                 install_autostart()
                 self.log("Windows 로그인 시 자동 실행을 등록했습니다. 다음 로그인부터 버튼 없이 자동 수집됩니다.")

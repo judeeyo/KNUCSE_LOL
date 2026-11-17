@@ -806,22 +806,47 @@ export interface BalancerPlayer {
   avgKda: number;
   preferredLanes?: Lane[];
   assignedLane?: Lane; // 밸런스 결과에서 배정된 포지션 (10인일 때)
+  parts?: BalancerScoreParts;
 }
 
-// Base scores per tier (4=lowest, 1=highest within tier)
+// 솔랭 티어 → 점수 (티어당 1점, 디비전 4→1 마다 0.25점). 마스터 이상은 디비전 없음
 const TIER_BASE: Record<string, number> = {
-  "실버": 3, "골드": 4, "플래티넘": 5, "에메랄드": 6, "다이아": 7, "마스터": 8,
+  "아이언": 1, "브론즈": 2, "실버": 3, "골드": 4, "플래티넘": 5, "에메랄드": 6, "다이아": 7,
+  "마스터": 8, "그랜드마스터": 8.6, "챌린저": 9.2,
+};
+// 흔히 쓰는 줄임말·영문 표기
+const TIER_ALIASES: Record<string, string> = {
+  "i": "아이언", "iron": "아이언", "아": "아이언",
+  "b": "브론즈", "bronze": "브론즈", "브": "브론즈",
+  "s": "실버", "silver": "실버", "실": "실버",
+  "g": "골드", "gold": "골드", "골": "골드",
+  "p": "플래티넘", "plat": "플래티넘", "platinum": "플래티넘", "플": "플래티넘", "플레": "플래티넘", "플래": "플래티넘",
+  "e": "에메랄드", "emerald": "에메랄드", "에": "에메랄드", "에메": "에메랄드",
+  "d": "다이아", "dia": "다이아", "diamond": "다이아", "다": "다이아", "다이아몬드": "다이아",
+  "m": "마스터", "master": "마스터", "마": "마스터",
+  "gm": "그랜드마스터", "grandmaster": "그랜드마스터", "그마": "그랜드마스터",
+  "c": "챌린저", "challenger": "챌린저", "챌": "챌린저", "챌린": "챌린저",
 };
 
-function parseTierScore(tier: string): number {
-  if (!tier) return 5; // Default to 플래티넘 level
-  const parts = tier.split(" ");
-  const base = TIER_BASE[parts[0]];
-  if (!base) return 5;
-  if (parts.length === 1) return base; // 마스터
-  const division = parseInt(parts[1]) || 1;
-  // Division 4=0.00, 3=0.25, 2=0.50, 1=0.75
+/** "다이아 2", "다이아2", "D2", "gold 3", "그마" 등 → 점수. 읽을 수 없으면 null */
+export function parseTierScore(tier: string | undefined | null): number | null {
+  if (!tier) return null;
+  const m = tier.trim().toLowerCase().replace(/\s+/g, "").match(/^([^\d]+)(\d)?/);
+  if (!m) return null;
+  const name = TIER_BASE[m[1]] !== undefined ? m[1] : TIER_ALIASES[m[1]];
+  const base = name ? TIER_BASE[name] : undefined;
+  if (base === undefined) return null;
+  if (base >= 8 || !m[2]) return base; // 마스터 이상 · 디비전 미기재
+  const division = Math.min(4, Math.max(1, parseInt(m[2], 10)));
   return base + (4 - division) * 0.25;
+}
+
+/** 밸런서 점수 구성 (화면에 근거를 보여 주기 위해 함께 반환) */
+export interface BalancerScoreParts {
+  tierScore: number; // 0~10, 티어 미입력이면 입력된 선수들의 평균
+  tierKnown: boolean;
+  perfScore: number; // 0~10, 판수가 적으면 평균(5)으로 수렴
+  perfWeight: number; // 0~0.65, 판수가 많을수록 전적 비중↑
 }
 
 export function getBalancerPlayers(
@@ -829,12 +854,21 @@ export function getBalancerPlayers(
   tierOverrides: Record<string, string>,
   lanePrefs: Record<string, Lane[]> = {}
 ): BalancerPlayer[] {
+  // 티어 미입력자는 "입력된 선수들의 평균 티어"로 가정 (아무도 없으면 플래티넘 4 = 5점)
+  const known = playerStats.map((p) => parseTierScore(tierOverrides[p.nickname])).filter((v): v is number => v !== null);
+  const defaultTier = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 5;
+
   return playerStats.map((p) => {
     const tier = tierOverrides[p.nickname] || "";
-    const tierScore = parseTierScore(tier);
-    // 내전 성적 = 선수별 성적 탭의 종합점수(0~100 백분위, 승률 비중이 가장 큼)를 0~10 스케일로.
-    // 판수가 쌓일수록 티어보다 실제 전적(승률·판수)을 더 신뢰 (최대 65%까지 전적 반영)
-    const perfScore = p.totalScore / 10;
+    const parsed = parseTierScore(tier);
+    const tierScore = parsed ?? defaultTier;
+    // 내전 성적: 종합점수(0~100 백분위)에서 표본 신뢰도 계수를 걷어낸 값을 쓰고,
+    // 판수가 적을수록 0 이 아니라 평균(5)으로 수렴시킨다 — 처음 온 사람을 "약한 사람"으로 취급하지 않도록.
+    const confidence = p.gamesPlayed > 0 ? Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 3)) : 0;
+    const base = confidence > 0 ? p.totalScore / confidence / 10 : 5;
+    const shrink = p.gamesPlayed / (p.gamesPlayed + 5);
+    const perfScore = 5 + (base - 5) * shrink;
+    // 판수가 쌓일수록 티어보다 실제 전적을 더 신뢰 (최대 65%)
     const wPerf = 0.65 * Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 5));
     const score = tierScore * (1 - wPerf) + perfScore * wPerf;
 
@@ -846,6 +880,12 @@ export function getBalancerPlayers(
       winRate: p.winRate,
       avgKda: p.avgKda,
       preferredLanes: lanePrefs[p.nickname],
+      parts: {
+        tierScore: Math.round(tierScore * 100) / 100,
+        tierKnown: parsed !== null,
+        perfScore: Math.round(perfScore * 100) / 100,
+        perfWeight: Math.round(wPerf * 100) / 100,
+      },
     };
   });
 }
@@ -883,23 +923,30 @@ function bestLaneAssignment(team: BalancerPlayer[]): { fit: number; lanes: Lane[
   return best;
 }
 
-export function balanceTeams(
-  players: BalancerPlayer[]
-): { team1: BalancerPlayer[]; team2: BalancerPlayer[]; diff: number } | null {
-  if (players.length < 2 || players.length > 10) return null;
+export interface BalanceResult {
+  team1: BalancerPlayer[];
+  team2: BalancerPlayer[];
+  diff: number; // 팀 점수 합 차이
+  laneFit: number; // 포지션 적합도 (0~100%, 10인일 때)
+}
+
+/**
+ * 팀 나누기. 점수 균형 + (10인이면) 선호 포지션 적합도를 함께 최적화하고,
+ * 가장 좋은 조합부터 서로 다른 조합을 최대 `maxOptions` 개 돌려준다 (다시 섞기용).
+ * 블루/레드만 바뀐 같은 편성은 하나로 친다.
+ */
+export function balanceOptions(players: BalancerPlayer[], maxOptions = 5): BalanceResult[] {
+  if (players.length < 2 || players.length > 10 || players.length % 2 !== 0) return [];
 
   const n = players.length;
-  const teamSize = Math.floor(n / 2);
-  const sorted = [...players].sort((a, b) => b.score - a.score);
+  const teamSize = n / 2;
+  const sorted = [...players].sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname));
   const withLanes = n === 10; // 10인일 때만 포지션 배정 고려
+  const anchor = sorted[0].nickname; // 거울상(팀 바꾸기만 한 조합) 제거용: 1등은 항상 team1
 
-  let bestTeam1: BalancerPlayer[] = [];
-  let bestTeam2: BalancerPlayer[] = [];
-  let bestDiff = Infinity;
-  let bestObjective = Infinity;
-
-  const combinations = getCombinations(sorted, teamSize);
-  for (const team1 of combinations) {
+  const candidates: Array<BalanceResult & { objective: number }> = [];
+  for (const team1 of getCombinations(sorted, teamSize)) {
+    if (team1[0].nickname !== anchor) continue;
     const team1Set = new Set(team1.map((p) => p.nickname));
     const team2 = sorted.filter((p) => !team1Set.has(p.nickname));
     const score1 = team1.reduce((s, p) => s + p.score, 0);
@@ -909,37 +956,34 @@ export function balanceTeams(
     // 점수 균형 + 포지션 적합도(팀당 최대 5.0)를 함께 최적화:
     // 선호 한 단계(0.2)를 어기는 것 = 점수 차이 0.2와 동일한 비용
     let objective = diff;
-    let lanes1: Lane[] | null = null;
-    let lanes2: Lane[] | null = null;
+    let t1 = team1;
+    let t2 = team2;
+    let laneFit = 1;
     if (withLanes) {
       const a1 = bestLaneAssignment(team1);
       const a2 = bestLaneAssignment(team2);
       objective = diff + (10 - a1.fit - a2.fit);
-      lanes1 = a1.lanes;
-      lanes2 = a2.lanes;
+      laneFit = (a1.fit + a2.fit) / 10;
+      t1 = team1.map((p, i) => ({ ...p, assignedLane: a1.lanes[i] }));
+      t2 = team2.map((p, i) => ({ ...p, assignedLane: a2.lanes[i] }));
     }
-
-    if (objective < bestObjective) {
-      bestObjective = objective;
-      bestDiff = diff;
-      bestTeam1 = lanes1
-        ? team1.map((p, i) => ({ ...p, assignedLane: lanes1![i] }))
-        : team1;
-      bestTeam2 = lanes2
-        ? team2.map((p, i) => ({ ...p, assignedLane: lanes2![i] }))
-        : team2;
-    }
+    candidates.push({ team1: t1, team2: t2, diff, laneFit, objective });
   }
 
-  // 포지션 배정이 있으면 탑→서폿 순으로 정렬해서 반환
-  const laneOrder = (p: BalancerPlayer) =>
-    p.assignedLane ? BALANCE_LANES.indexOf(p.assignedLane) : 0;
-  if (withLanes) {
-    bestTeam1 = [...bestTeam1].sort((a, b) => laneOrder(a) - laneOrder(b));
-    bestTeam2 = [...bestTeam2].sort((a, b) => laneOrder(a) - laneOrder(b));
-  }
+  candidates.sort((a, b) => a.objective - b.objective);
+  const laneOrder = (p: BalancerPlayer) => (p.assignedLane ? BALANCE_LANES.indexOf(p.assignedLane) : 0);
+  const byLane = (team: BalancerPlayer[]) => (withLanes ? [...team].sort((a, b) => laneOrder(a) - laneOrder(b)) : team);
+  return candidates.slice(0, maxOptions).map((c) => ({
+    team1: byLane(c.team1),
+    team2: byLane(c.team2),
+    diff: Math.round(c.diff * 100) / 100,
+    laneFit: Math.round(c.laneFit * 100),
+  }));
+}
 
-  return { team1: bestTeam1, team2: bestTeam2, diff: Math.round(bestDiff * 100) / 100 };
+/** 가장 좋은 조합 하나 (이전 API 호환) */
+export function balanceTeams(players: BalancerPlayer[]): BalanceResult | null {
+  return balanceOptions(players, 1)[0] ?? null;
 }
 
 function getCombinations<T>(arr: T[], size: number): T[][] {

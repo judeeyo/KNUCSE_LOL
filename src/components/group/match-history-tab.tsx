@@ -12,10 +12,13 @@ export function MatchHistoryTab({
   matches,
   groupId,
   onDelete,
+  onOpen,
 }: {
   matches: Match[];
   groupId: string;
   onDelete: (matchId: string) => void;
+  /** 상세로 이동하기 직전 (목록 위치 기억용) */
+  onOpen?: () => void;
 }) {
   const router = useRouter();
   const reversed = [...matches].reverse();
@@ -72,7 +75,10 @@ export function MatchHistoryTab({
                 key={match.id}
                 match={match}
                 onDelete={onDelete}
-                onClick={() => router.push(`/group/${groupId}/match/${match.id}`)}
+                onClick={() => {
+                  onOpen?.();
+                  router.push(`/group/${groupId}/match/${match.id}`);
+                }}
               />
             ))}
           </div>

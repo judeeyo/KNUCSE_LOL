@@ -10,6 +10,7 @@ import { ChevronLeft, Trophy, Flame, Shield, Eye, Clock, Swords, Edit3, Save, Tr
 import { ChampionIcon } from "@/components/ui/champion-icon";
 import { LoadError } from "@/components/ui/load-error";
 import { AdminCancelledError } from "@/lib/admin-client";
+import { backToList } from "@/lib/list-position";
 import type { Match, PlayerStat, Member } from "@/lib/types";
 
 const LANE_EMOJI: Record<string, string> = {
@@ -118,7 +119,7 @@ export default function MatchDetailPage() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 min-w-0">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
         <button
-          onClick={() => router.push("/group/main")}
+          onClick={() => backToList(router)}
           className="flex items-center gap-1 text-sm text-ink-subtle hover:text-ink transition-fast cursor-pointer"
         >
           <ChevronLeft size={16} />
@@ -184,7 +185,8 @@ export default function MatchDetailPage() {
                   fail("삭제", err);
                   return;
                 }
-                router.push("/group/main");
+                // 삭제한 경기는 목록에서 사라지므로 뒤로가기 대신 매치 기록 탭으로
+                router.push("/group/main?tab=matches");
               }}>
                 <Trash2 size={13} />
                 삭제

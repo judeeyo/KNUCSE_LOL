@@ -16,6 +16,7 @@ import { DuoTab } from "@/components/group/duo-tab";
 import { Modal } from "@/components/ui/modal";
 import { LoadError } from "@/components/ui/load-error";
 import { AdminCancelledError } from "@/lib/admin-client";
+import { rememberListPosition, takeListScroll } from "@/lib/list-position";
 import {
   Users,
   Swords,
@@ -49,7 +50,16 @@ const CACHE_KEY = "naejeon-group-cache-v1";
 
 export default function MainGroupPage() {
   const [group, setGroup] = useState<Group | null>(null);
-  const [tab, setTab] = useState<Tab>("players");
+  const [tab, setTabState] = useState<Tab>("players");
+  // 지금 보는 탭을 주소(?tab=)에 남겨 두어, 상세에서 뒤로 오거나 새로고침해도 같은 탭이 열리게 한다
+  const setTab = useCallback((t: Tab) => {
+    setTabState(t);
+    const url = new URL(window.location.href);
+    if (t === "players") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", t);
+    window.history.replaceState(window.history.state, "", url.pathname + url.search);
+  }, []);
+  const [restored, setRestored] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showManual, setShowManual] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -97,9 +107,24 @@ export default function MainGroupPage() {
     // 마운트 시 1회 데이터 로드. loadData는 캐시 즉시 렌더 후 네트워크로 최신화하는
     // 비동기 로더로, 이 페이지의 유일한 진입점이라 cascading render 우려가 없다.
     // (SSR 안전을 위해 캐시/네트워크 접근은 반드시 마운트 이후에만 실행)
+    const fromUrl = new URLSearchParams(window.location.search).get("tab");
     // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (fromUrl && TABS.some((t) => t.key === fromUrl)) setTabState(fromUrl as Tab);
     loadData();
   }, [loadData]);
+
+  // 상세 화면에서 돌아왔으면 보던 스크롤 위치로 복원 (목록이 그려진 뒤 한 번)
+  useEffect(() => {
+    if (!group || restored) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRestored(true);
+    const y = takeListScroll(tab);
+    if (y === null) return;
+    // 카드·표가 다 그려진 다음 프레임에 이동 (이미지 로딩 등으로 높이가 늦게 잡히는 경우 한 번 더)
+    requestAnimationFrame(() => window.scrollTo(0, y));
+    const t = window.setTimeout(() => window.scrollTo(0, y), 150);
+    return () => window.clearTimeout(t);
+  }, [group, restored, tab]);
 
   const playerStats = useMemo(() => (group ? buildPlayerStats(group) : []), [group]);
   const awards = useMemo(() => (group ? computeAwards(group) : []), [group]);
@@ -196,6 +221,7 @@ export default function MainGroupPage() {
       {tab === "duos" && <DuoTab group={group} />}
       {tab === "matches" && (
         <MatchHistoryTab
+          onOpen={() => rememberListPosition("matches")}
           // 매치 기록에는 "없던 경기"도 흑백으로 함께 보여 준다 (통계에는 반영 안 됨)
           matches={[...group.matches, ...(group.excludedMatches || [])].sort((a, b) =>
             a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0

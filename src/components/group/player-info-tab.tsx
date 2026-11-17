@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { updateMemberProfile, mergeAliases, renameMember, deleteMember } from "@/lib/store";
 import { AdminCancelledError } from "@/lib/admin-client";
+import NextLink from "next/link";
+import { playerHref } from "@/lib/profile";
+import { rememberListPosition } from "@/lib/list-position";
 
 /** 관리자 작업 실패 안내 (로그인 창을 취소한 경우는 조용히 넘어감) */
 function reportError(what: string, err: unknown) {
@@ -259,7 +262,13 @@ export function PlayerInfoTab({
                 )}
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-ink text-sm">{player.nickname}</span>
+                    <NextLink
+                      href={playerHref(player.nickname)}
+                      onClick={() => rememberListPosition("info")}
+                      className="font-semibold text-ink text-sm break-all hover:text-primary hover:underline underline-offset-2"
+                    >
+                      {player.nickname}
+                    </NextLink>
                     {player.realName && (
                       <span className="text-xs text-ink-subtle">({player.realName})</span>
                     )}

@@ -11,6 +11,8 @@ import { ChampionIcon } from "@/components/ui/champion-icon";
 import { LoadError } from "@/components/ui/load-error";
 import { AdminCancelledError } from "@/lib/admin-client";
 import { backToList } from "@/lib/list-position";
+import Link from "next/link";
+import { playerHref } from "@/lib/profile";
 import type { Match, PlayerStat, Member } from "@/lib/types";
 
 const LANE_EMOJI: Record<string, string> = {
@@ -369,7 +371,9 @@ function TeamSection({ team, players, win, maxDamage, maxTaken, maxGold, getReal
                       {editing ? (
                         <input className="bg-transparent border-b border-hairline focus:border-primary outline-none w-24 text-ink text-sm font-semibold" value={p.nickname} onChange={(e) => onUpdate?.(pIdx, "nickname", e.target.value)} />
                       ) : (
-                        <span className="font-semibold text-ink text-sm break-all">{p.nickname}</span>
+                        <Link href={playerHref(p.nickname)} className="font-semibold text-ink text-sm break-all hover:text-primary hover:underline underline-offset-2">
+                          {p.nickname}
+                        </Link>
                       )}
                       {!editing && realName && <span className="text-xs text-ink-tertiary">({realName})</span>}
                       {!editing && p.isMvp && <Badge variant="mvp">MVP</Badge>}

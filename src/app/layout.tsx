@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Navbar } from "@/components/layout/navbar";
 import { AdminLoginHost } from "@/components/admin/admin-login-host";
+import { EntryTracker } from "@/components/layout/entry-tracker";
 import "./globals.css";
 
 export const viewport = {
@@ -24,6 +25,7 @@ export default function RootLayout({
         <Navbar />
         <main className="flex-1 min-w-0">{children}</main>
         <AdminLoginHost />
+        <EntryTracker />
       </body>
     </html>
   );

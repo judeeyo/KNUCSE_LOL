@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { playerHref } from "@/lib/profile";
+import { rememberListPosition } from "@/lib/list-position";
 import { StatTable, stickyHead } from "@/components/ui/stat-table";
 import { Badge } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
@@ -244,7 +247,18 @@ export function PlayerStatsTab({
         title={selectedPlayer?.nickname}
         className="max-w-2xl"
       >
-        {selectedPlayer && <PlayerDetail player={selectedPlayer} />}
+        {selectedPlayer && (
+          <>
+            <Link
+              href={playerHref(selectedPlayer.nickname)}
+              onClick={() => rememberListPosition("players")}
+              className="mb-4 flex items-center justify-center gap-1 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/15 transition-fast"
+            >
+              경기 기록·승률 추이·상대 전적 보기 <ChevronRight size={14} />
+            </Link>
+            <PlayerDetail player={selectedPlayer} />
+          </>
+        )}
       </Modal>
     </div>
   );
@@ -327,13 +341,13 @@ function AwardsCarousel({ awards }: { awards: Award[] }) {
   );
 }
 
-function PlayerDetail({ player }: { player: PlayerStats }) {
+export function PlayerDetail({ player }: { player: PlayerStats }) {
   const [showAllChamps, setShowAllChamps] = useState(false);
 
   return (
     <div className="space-y-4">
       {/* Overview */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MiniStat label="경기" value={`${player.gamesPlayed}`} />
         <MiniStat label="승률" value={`${player.winRate.toFixed(0)}%`} color={player.winRate >= 50 ? "text-win" : "text-lose"} />
         <MiniStat label="KDA" value={player.avgKda.toFixed(2)} color={player.avgKda >= 3 ? "text-win" : undefined} />
@@ -341,14 +355,14 @@ function PlayerDetail({ player }: { player: PlayerStats }) {
       </div>
 
       {/* Avg Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <MiniStat label="평균 K/D/A" value={`${player.avgKills.toFixed(1)} / ${player.avgDeaths.toFixed(1)} / ${player.avgAssists.toFixed(1)}`} />
         <MiniStat label="분당 CS" value={player.csPerMin.toFixed(1)} />
         <MiniStat label="분당 골드" value={`${Math.round(player.goldPerMin).toLocaleString()}`} />
         <MiniStat label="킬관여율" value={`${player.avgKillParticipation.toFixed(0)}%`} color={player.avgKillParticipation >= 60 ? "text-win" : undefined} />
       </div>
 
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <MiniStat label="시야점수" value={player.visionGames > 0 ? player.avgVision.toFixed(1) : "미수집"} />
         <MiniStat label="골드당 딜" value={player.damageGames === 0 ? "미수집" : player.damagePerGold > 0 ? player.damagePerGold.toFixed(2) : "-"} color={player.damagePerGold >= 1.5 ? "text-win" : undefined} />
         <MiniStat label="평균 포탑딜" value={player.damageGames === 0 ? "미수집" : player.avgTurretDamage > 0 ? Math.round(player.avgTurretDamage).toLocaleString() : "-"} />
@@ -445,7 +459,7 @@ function PlayerDetail({ player }: { player: PlayerStats }) {
 function MiniStat({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div className="bg-surface-1/50 rounded-lg p-2.5 text-center">
-      <div className="text-[10px] text-ink-subtle uppercase tracking-wider">{label}</div>
+      <div className="text-[10px] text-ink-subtle uppercase tracking-wider break-keep">{label}</div>
       <div className={`font-bold text-sm mt-0.5 ${color || "text-ink"}`}>{value}</div>
     </div>
   );

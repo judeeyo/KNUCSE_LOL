@@ -164,6 +164,9 @@ for (const vp of VIEWPORTS) {
   await page.getByRole("button", { name: "수정" }).click();
   await check("매치 상세 - 수정 모드");
 
+  await page.goto(BASE + "/group/main/player/Eddie", { waitUntil: "networkidle" });
+  await check("선수 페이지", { expectText: "경기 기록" });
+
   await page.goto(BASE + "/group/main/new", { waitUntil: "networkidle" });
   await check("수동 등록", { expectText: "수동 경기 등록" });
   // 저장 시 관리자 확인 창

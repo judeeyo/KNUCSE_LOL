@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
+import Link from "next/link";
+import { playerHref } from "@/lib/profile";
+import { rememberListPosition } from "@/lib/list-position";
 import { activityOf, buildLaneRankings, formatLastPlayed, INACTIVE_DAYS, LANE_RANK_MIN_GAMES } from "@/lib/stats";
 import type { Group, Lane } from "@/lib/types";
 
@@ -65,7 +68,13 @@ export function LaneRankingTab({ group }: { group: Group }) {
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-sm font-medium text-ink truncate">{e.nickname}</span>
+                          <Link
+                            href={playerHref(e.nickname)}
+                            onClick={() => rememberListPosition("lanes")}
+                            className="text-sm font-medium text-ink truncate hover:text-primary hover:underline underline-offset-2"
+                          >
+                            {e.nickname}
+                          </Link>
                           {e.act.inactive && (
                             <span className="shrink-0 text-[10px] font-semibold text-mvp border border-mvp/40 bg-mvp/10 rounded px-1 py-px">
                               3개월+ 미참여

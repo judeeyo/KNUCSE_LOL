@@ -1,6 +1,7 @@
 import { getSupabase } from "./supabase";
 import { adminFetch } from "./admin-client";
 import { GROUP_NAME, rowToMatch, type MatchRow } from "./match-normalize";
+import { applyRoleRelativeAwards } from "./mvp";
 import type { Group, Match, PlayerStat, Member, Lane } from "./types";
 
 /** DB 조회 실패. "기록이 0건"과 구분하기 위해 빈 배열 대신 예외로 알린다. */
@@ -61,9 +62,21 @@ export async function getAllMembers(): Promise<Member[]> {
 export async function getGroup(): Promise<Group> {
   const [all, members] = await Promise.all([getAllMatches(), getAllMembers()]);
   // "없던 경기"는 통계에서 빼고 매치 기록 표시용으로만 따로 둔다
-  const matches = all.filter((m) => !m.excludedReason);
-  const excludedMatches = all.filter((m) => m.excludedReason);
+  // MVP·ACE 는 "같은 라인·같은 승패 평균 대비"로 다시 고른다 (기준은 통계에 반영되는 경기)
+  const counted = all.filter((m) => !m.excludedReason);
+  const matches = applyRoleRelativeAwards(counted);
+  const excludedMatches = applyRoleRelativeAwards(all.filter((m) => m.excludedReason), counted);
   return { id: GROUP_NAME, name: GROUP_NAME, inviteCode: "", createdAt: "", members, matches, excludedMatches };
+}
+
+/** 경기 상세용: 전체 경기와 같은 기준(라인 평균 대비)으로 MVP·ACE 를 고른 한 경기 + 선수 목록 */
+export async function getMatchInContext(matchId: string): Promise<{ match: Match | null; members: Member[] }> {
+  const g = await getGroup();
+  const found = [...g.matches, ...(g.excludedMatches || [])].find((m) => m.id === matchId);
+  if (found) return { match: found, members: g.members };
+  // 중복 후보로 보류 중인 경기 등 목록에 없는 경기
+  const single = await getMatch(matchId);
+  return { match: single ? applyRoleRelativeAwards([single], g.matches)[0] : null, members: g.members };
 }
 
 export async function setMatchExcluded(matchId: string, reason: string | null) {

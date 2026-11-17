@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getMatch, getAllMembers, updateMatch, deleteMatch, setMatchExcluded } from "@/lib/store";
+import { getMatchInContext, updateMatch, deleteMatch, setMatchExcluded } from "@/lib/store";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,7 @@ export default function MatchDetailPage() {
     let cancelled = false;
     async function load() {
       try {
-        const [m, mems] = await Promise.all([getMatch(matchId), getAllMembers()]);
+        const { match: m, members: mems } = await getMatchInContext(matchId);
         if (cancelled) return;
         setMatch(m);
         setMembers(mems);
@@ -136,7 +136,7 @@ export default function MatchDetailPage() {
                 setSaving(true);
                 try {
                   await updateMatch(matchId, editPlayers, editDuration);
-                  const m = await getMatch(matchId);
+                  const { match: m } = await getMatchInContext(matchId);
                   setMatch(m);
                   setEditing(false);
                 } catch (err) {
@@ -163,7 +163,7 @@ export default function MatchDetailPage() {
                   if (!confirm(`"${match.excludedReason}" 표시를 해제하고 다시 통계에 반영할까요?`)) return;
                   try {
                     await setMatchExcluded(matchId, null);
-                    setMatch(await getMatch(matchId));
+                    setMatch((await getMatchInContext(matchId)).match);
                   } catch (err) {
                     fail("제외 해제", err);
                   }
@@ -173,7 +173,7 @@ export default function MatchDetailPage() {
                 if (!reason?.trim()) return;
                 try {
                   await setMatchExcluded(matchId, reason);
-                  setMatch(await getMatch(matchId));
+                  setMatch((await getMatchInContext(matchId)).match);
                 } catch (err) {
                   fail("기록 제외", err);
                 }

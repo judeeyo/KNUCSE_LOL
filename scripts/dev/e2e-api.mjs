@@ -198,5 +198,23 @@ assert.equal(stored.players[1].spell2Id, 11);
 assert.equal(stored.players[0].perkKeystone, 8112);
 step("아이템·주문·룬·팀 오브젝트 저장");
 
+// 12. 수집기 다운로드: 공개본에는 토큰 없음, 관리자본에는 토큰 내장 / 멤버 명단 API
+const unzipPy = async (res) => {
+  const buf = Buffer.from(await res.arrayBuffer());
+  const i = buf.indexOf("EMBEDDED_UPLOAD_TOKEN = ");
+  return buf.subarray(i, i + 80).toString("utf8").split("\n")[0];
+};
+r = await fetch(BASE + "/api/collector");
+assert.equal(r.status, 200);
+assert.equal(await unzipPy(r), 'EMBEDDED_UPLOAD_TOKEN = ""');
+r = await fetch(BASE + "/api/collector?withToken=1");
+assert.equal(r.status, 401);
+r = await fetch(BASE + "/api/collector?withToken=1", { headers: { "x-admin-password": ADMIN } });
+assert.equal(r.status, 200);
+assert.equal(await unzipPy(r), `EMBEDDED_UPLOAD_TOKEN = ${JSON.stringify(TOKEN)}`);
+const roster = await (await fetch(BASE + "/api/roster")).json();
+assert.ok(roster.names.includes("Eddie") && Array.isArray(roster.puuids));
+step("수집기: 공개본 토큰 없음, 관리자본 토큰 내장, 멤버 명단 API");
+
 await fetch(MOCK + "/__mock/reset", { method: "POST" });
 console.log("OK: API 흐름 검증 완료");

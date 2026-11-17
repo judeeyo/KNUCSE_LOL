@@ -116,6 +116,23 @@ export default function AdminPage() {
       setNotice({ kind: "ok", text: `백업 파일을 내려받았습니다: 경기 ${data.counts.matches}건, 선수 ${data.counts.members}명` });
     });
 
+  // 업로드 토큰이 들어 있는 수집기: 설치 후 아무것도 입력할 필요가 없다 (관리자만 받을 수 있음)
+  const downloadReadyCollector = () =>
+    run("collector", async () => {
+      await adminFetch("verify"); // 로그인 안 돼 있으면 여기서 비밀번호 창
+      const res = await fetch("/api/collector?withToken=1", { headers: { "x-admin-password": getAdminPassword() || "" } });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(String((body as { error?: string }).error || `내려받기 실패 (${res.status})`));
+      }
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(await res.blob());
+      a.download = "naejeon-collector-ready.zip";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setNotice({ kind: "ok", text: "토큰이 들어 있는 수집기를 내려받았습니다. 압축을 풀고 내전수집기.bat 을 더블클릭하면 끝입니다." });
+    });
+
   const pickFiles = async (list: FileList | null) => {
     if (!list || list.length === 0) return;
     const loaded = await Promise.all(
@@ -184,6 +201,23 @@ export default function AdminPage() {
           {notice.text}
         </div>
       )}
+
+      {/* 0. 수집기 */}
+      <Card className="space-y-3">
+        <h2 className="text-sm font-semibold text-ink">수집기 (설치 없이 바로 쓰는 버전)</h2>
+        <ol className="text-xs text-ink-subtle list-decimal pl-4 space-y-1 break-keep">
+          <li>아래 버튼으로 받은 ZIP 을 지워지지 않을 폴더에 풉니다.</li>
+          <li><code className="text-ink-muted">내전수집기.bat</code> 을 더블클릭합니다. 끝입니다.</li>
+        </ol>
+        <p className="text-xs text-ink-subtle break-keep">
+          Python 이 없으면 자동 설치하고, 업로드 토큰도 들어 있어 입력할 것이 없습니다. 이후 PC 를 켜면 알아서 실행되고,
+          내전이 끝날 때마다 자동으로 올리며, 롤에 로그인하면 아직 안 올린 과거 내전도 올립니다(등록된 멤버 5명 이상인 5대5만).
+          이 ZIP 에는 업로드 토큰이 들어 있으니 <span className="text-ink-muted">내전하는 사람에게만</span> 주세요 — 토큰으로는 경기 추가만 가능하고 수정·삭제는 못 합니다.
+        </p>
+        <Button size="sm" onClick={downloadReadyCollector} disabled={Boolean(busy)}>
+          <Download size={13} /> {busy === "collector" ? "만드는 중..." : "토큰 포함 수집기 내려받기"}
+        </Button>
+      </Card>
 
       {/* 1. 백업 */}
       <Card className="space-y-3">

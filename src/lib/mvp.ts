@@ -1,4 +1,4 @@
-import type { PlayerStat, Lane } from "./types";
+import type { Match, PlayerStat, Lane } from "./types";
 
 /**
  * 매치 내 기여도 점수 (0~10)
@@ -133,4 +133,48 @@ export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
     isMvp: mvp ? p.nickname === mvp.nickname && p.team === mvp.team : false,
     isAce: ace ? p.nickname === ace.nickname && p.team === ace.team : false,
   }));
+}
+
+/**
+ * MVP·ACE 를 "같은 라인·같은 승패 평균 대비" 로 다시 고른다. (점수 숫자는 그대로)
+ *
+ * 경기 점수는 라인마다 평균이 다르다 — 특히 진 팀 서포터는 팀 킬이 적어 킬관여율이 쉽게 높아지고,
+ * 탱커라 받은 피해도 점수가 돼서, 그대로 최고점을 고르면 ACE 의 절반 가까이가 서포터에게 갔다
+ * (상세 데이터 22경기 중 10번). 그래서 각 선수 점수를 같은 라인·같은 승패(·같은 자료 종류) 경기들의
+ * 평균·표준편차로 표준화한 값(z)으로 MVP(이긴 팀)·ACE(진 팀)를 고른다.
+ * 표본이 적은 칸은 라인 구분 없이 같은 승패 전체로 대신한다.
+ */
+const AWARD_BASELINE_MIN = 8;
+
+export function applyRoleRelativeAwards(matches: Match[], baselineFrom: Match[] = matches): Match[] {
+  const kind = (m: Match) => (m.missing?.damage ? "basic" : "detailed");
+  const keys = (m: Match, p: PlayerStat) => [`${kind(m)}|${p.lane ?? "?"}|${p.win}`, `${kind(m)}|*|${p.win}`, `*|*|${p.win}`];
+  const pools = new Map<string, number[]>();
+  for (const m of baselineFrom) {
+    for (const p of m.players) {
+      for (const k of keys(m, p)) {
+        const arr = pools.get(k);
+        if (arr) arr.push(p.mvpScore);
+        else pools.set(k, [p.mvpScore]);
+      }
+    }
+  }
+  const stats = new Map<string, { mu: number; sd: number; n: number }>();
+  for (const [k, v] of pools) {
+    const mu = v.reduce((a, b) => a + b, 0) / v.length;
+    const sd = Math.sqrt(v.reduce((a, b) => a + (b - mu) ** 2, 0) / v.length);
+    stats.set(k, { mu, sd: sd > 0.05 ? sd : 1, n: v.length });
+  }
+  const z = (m: Match, p: PlayerStat) => {
+    const s = keys(m, p).map((k) => stats.get(k)).find((x) => x && x.n >= AWARD_BASELINE_MIN);
+    return s ? (p.mvpScore - s.mu) / s.sd : p.mvpScore - 5;
+  };
+
+  return matches.map((m) => {
+    const best = (team: PlayerStat[]) =>
+      team.length ? team.reduce((a, b) => (z(m, b) > z(m, a) || (z(m, b) === z(m, a) && b.mvpScore > a.mvpScore) ? b : a)) : null;
+    const mvp = best(m.players.filter((p) => p.win));
+    const ace = best(m.players.filter((p) => !p.win));
+    return { ...m, players: m.players.map((p) => ({ ...p, isMvp: p === mvp, isAce: p === ace })) };
+  });
 }

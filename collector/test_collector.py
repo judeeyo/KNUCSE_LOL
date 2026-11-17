@@ -25,9 +25,17 @@ class FakeSite(BaseHTTPRequestHandler):
     mode = "ok"       # ok | down | reject
     received = []     # 업로드된 경기 본문
     auth_seen = []
+    roster = None     # /api/roster 응답 (None 이면 503)
 
     def log_message(self, *args):
         pass
+
+    def do_GET(self):
+        if self.path.startswith("/api/roster"):
+            if FakeSite.roster is None:
+                return self._send(503, {"error": "x"})
+            return self._send(200, FakeSite.roster)
+        self._send(404, {})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode())
@@ -81,6 +89,9 @@ class CollectorTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         os.environ["NAEJEON_DATA_DIR"] = self.tmp.name
         FakeSite.mode = "ok"
+        FakeSite.roster = None
+        collector._roster_cache.update(at=0.0, names=None, puuids=None)
+        collector._pending_enrich.clear()
         FakeSite.received = []
         FakeSite.auth_seen = []
         self.logs = []
@@ -366,6 +377,58 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(last["gameId"], 93)
         self.assertEqual(last["objectives"]["blue"]["towers"], 9)
         self.assertEqual(last["players"][0]["items"][0], 3089)
+
+    def test_embedded_token_is_used_when_nothing_is_configured(self):
+        self.assertEqual(collector.get_upload_token(), "")
+        collector.EMBEDDED_UPLOAD_TOKEN = TOKEN
+        try:
+            self.assertEqual(collector.get_upload_token(), TOKEN)
+            self.assertEqual(collector.check_connection()[0], True)
+        finally:
+            collector.EMBEDDED_UPLOAD_TOKEN = ""
+
+    def test_roster_check(self):
+        m = sample_match(1)
+        self.assertEqual(collector.roster_check(m), (True, None))  # 명단을 못 받으면 거르지 않음
+        FakeSite.roster = {"names": ["p0", "p1", "p2", "p3"], "puuids": ["pu9"]}
+        collector._roster_cache["at"] = 0
+        self.assertEqual(collector.roster_check(m), (False, 4))
+        m["players"][9]["puuid"] = "pu9"  # 닉네임이 달라도 계정 ID 가 같으면 아는 사람
+        self.assertEqual(collector.roster_check(m), (True, 5))
+
+    def test_auto_sync_uploads_only_new_member_games_once(self):
+        collector.set_upload_token(TOKEN)
+        self._fake_lcu([{"gameId": 71, "queueId": 0}, {"gameId": 72, "queueId": 0}, {"gameId": 73, "queueId": 0}])
+        self.solo_games = {73}  # 봇전
+        FakeSite.roster = {"names": [f"n{i}" for i in range(10)], "puuids": []}
+        self.assertEqual(collector.auto_sync_history({}), (2, 0))
+        self.assertEqual(sorted(m["match"]["gameId"] for m in FakeSite.received), [71, 72])
+        self.assertTrue(all(m["source"] == "history" for m in FakeSite.received))
+        # 6시간 안에는 다시 하지 않고, 강제로 해도 이미 처리한 경기는 다시 올리지 않음
+        self.assertEqual(collector.auto_sync_history({}), (0, 0))
+        self.assertEqual(collector.auto_sync_history({}, force=True), (0, 0))
+        self.assertEqual(len(FakeSite.received), 2)
+
+    def test_auto_sync_skips_games_with_strangers(self):
+        collector.set_upload_token(TOKEN)
+        self._fake_lcu([{"gameId": 81, "queueId": 0}])
+        FakeSite.roster = {"names": ["someone-else"], "puuids": []}
+        self.assertEqual(collector.auto_sync_history({}), (0, 1))
+        self.assertEqual(FakeSite.received, [])
+        self.assertEqual(self.files("not-uploaded"), ["match_81.json"])
+
+    def test_realtime_skips_games_with_strangers(self):
+        collector.set_upload_token(TOKEN)
+        FakeSite.roster = {"names": ["someone-else"], "puuids": []}
+        players = [{"summonerName": f"x{i}", "championName": "Ahri", "stats": {}} for i in range(10)]
+        eog = {"gameId": 94, "gameLength": 1805, "teams": [
+            {"isWinningTeam": True, "players": players[:5]}, {"isWinningTeam": False, "players": players[5:]}]}
+        self._fake_lcu([])
+        collector.get_eog_stats = lambda lock: eog
+        collector.is_custom_game = lambda lock: True
+        self.assertEqual(collector.handle_end_of_game({}, None), 94)
+        self.assertEqual(FakeSite.received, [])
+        self.assertEqual(self.files("not-uploaded"), ["match_94.json"])
 
     def test_solo_tier_parsing(self):
         f = collector.solo_tier_from_ranked

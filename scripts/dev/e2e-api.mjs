@@ -151,5 +151,16 @@ assert.equal(s.matches.flatMap((m) => m.players).filter((p) => p.nickname === "�
 assert.equal(s.members.some((m) => m.nickname === "뽕뽕태"), false);
 step("닉네임 통합(뽕뽕태→뿅뿅태): 3경기 반영");
 
+// 9. 없던 경기 표시/해제 — 행은 그대로 두고 표시만 바뀐다
+const victim = (await state()).matches[0];
+r = await admin("setExcluded", { matchId: victim.id, reason: "Zeus's Law" });
+assert.equal(r.status, 200);
+assert.equal((await state()).matches.find((m) => m.id === victim.id).excluded_reason, "Zeus's Law");
+r = await upload({ ...detailed(legacy[0], 1), gameId: undefined }, "collector"); // 아무 업로드나 해도 표시는 유지
+assert.equal((await state()).matches.find((m) => m.id === victim.id).excluded_reason, "Zeus's Law");
+r = await admin("setExcluded", { matchId: victim.id, reason: null });
+assert.equal((await state()).matches.find((m) => m.id === victim.id).excluded_reason, null);
+step("없던 경기 표시 → 유지 → 해제");
+
 await fetch(MOCK + "/__mock/reset", { method: "POST" });
 console.log("OK: API 흐름 검증 완료");

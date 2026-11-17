@@ -21,6 +21,7 @@ export interface MatchRow {
   review_status?: string | null;
   duplicate_of?: string | null;
   uploaded_at?: string | null;
+  excluded_reason?: string | null;
 }
 
 const NUMERIC_FIELDS = [
@@ -85,6 +86,7 @@ export function rowToMatch(row: MatchRow): Match {
     gameId: row.game_id || undefined,
     timeUnknown: Boolean(row.time_unknown),
     missing,
+    excludedReason: row.excluded_reason?.trim() || undefined,
   };
 }
 

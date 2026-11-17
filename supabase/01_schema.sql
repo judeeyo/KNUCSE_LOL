@@ -28,6 +28,7 @@ alter table public.matches add column if not exists time_unknown  boolean not nu
 alter table public.matches add column if not exists review_status text;
 alter table public.matches add column if not exists duplicate_of  text;
 alter table public.matches add column if not exists uploaded_at   timestamptz not null default now();
+alter table public.matches add column if not exists excluded_reason text; -- 문구가 있으면 통계에서 제외("없던 경기")
 
 comment on column public.matches.source is
   'collector(실시간 수집) | history(클라이언트 과거 전적 추출) | manual(수동 등록) | legacy-import(naejeon.lol 수기 28경기) | backup-import(백업·내보내기 파일)';

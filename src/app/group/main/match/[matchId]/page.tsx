@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getMatch, getAllMembers, updateMatch, deleteMatch } from "@/lib/store";
+import { getMatch, getAllMembers, updateMatch, deleteMatch, setMatchExcluded } from "@/lib/store";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -154,6 +154,28 @@ export default function MatchDetailPage() {
                 <Edit3 size={13} />
                 수정
               </Button>
+              <Button variant="ghost" size="sm" onClick={async () => {
+                if (match.excludedReason) {
+                  if (!confirm(`"${match.excludedReason}" 표시를 해제하고 다시 통계에 반영할까요?`)) return;
+                  try {
+                    await setMatchExcluded(matchId, null);
+                    setMatch(await getMatch(matchId));
+                  } catch (err) {
+                    fail("제외 해제", err);
+                  }
+                  return;
+                }
+                const reason = prompt("이 경기를 없던 경기로 처리합니다 (어떤 통계에도 반영되지 않음).\n매치 기록에 표시할 문구:", "Zeus's Law");
+                if (!reason?.trim()) return;
+                try {
+                  await setMatchExcluded(matchId, reason);
+                  setMatch(await getMatch(matchId));
+                } catch (err) {
+                  fail("기록 제외", err);
+                }
+              }}>
+                {match.excludedReason ? "제외 해제" : "기록 제외"}
+              </Button>
               <Button variant="danger" size="sm" onClick={async () => {
                 if (!confirm("이 경기를 삭제하시겠습니까?")) return;
                 try {
@@ -172,6 +194,14 @@ export default function MatchDetailPage() {
         </div>
       </div>
 
+      {match.excludedReason && (
+        <div className="mb-4 rounded-xl border border-hairline-strong bg-surface-2 px-4 py-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-white text-xl font-extrabold tracking-wide">{match.excludedReason}</span>
+          <span className="text-xs text-ink-subtle break-keep">없던 경기로 처리됨 — 선수·챔피언·포지션 통계, 어워즈, 팀 밸런스 어디에도 반영되지 않습니다.</span>
+        </div>
+      )}
+
+      <div className={match.excludedReason ? "grayscale-75 opacity-75" : undefined}>
       {/* Match Header Card */}
       <Card className="mb-6 p-0 overflow-hidden">
         <div className="bg-gradient-to-r from-blue-500/5 via-transparent to-red-500/5 p-4 sm:p-6">
@@ -290,6 +320,7 @@ export default function MatchDetailPage() {
         const realIdx = redIdxMap[idx];
         if (realIdx !== undefined) setEditPlayers(prev => { const next = [...prev]; next[realIdx] = { ...next[realIdx], [field]: val }; return next; });
       } : undefined} />
+      </div>
     </div>
   );
 }

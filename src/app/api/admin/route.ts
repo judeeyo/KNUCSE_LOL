@@ -32,6 +32,9 @@ export async function POST(req: NextRequest) {
       case "updateMatch":
         await ops.updateMatch(sb, body as never);
         return NextResponse.json({ ok: true });
+      case "setExcluded":
+        await ops.setMatchExcluded(sb, str("matchId"), body.reason == null ? null : String(body.reason));
+        return NextResponse.json({ ok: true });
       case "deleteMatch":
         await ops.deleteMatch(sb, str("matchId"));
         return NextResponse.json({ ok: true });

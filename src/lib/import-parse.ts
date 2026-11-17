@@ -50,6 +50,7 @@ export interface IncomingMatch {
   source: MatchSource;
   reviewStatus: "duplicate_candidate" | null;
   duplicateOf: string | null;
+  excludedReason?: string | null;
   players: IncomingPlayer[];
 }
 
@@ -193,6 +194,7 @@ function parseRow(r: Obj, errors: string[]): IncomingMatch | null {
     source,
     reviewStatus: r.review_status === "duplicate_candidate" ? "duplicate_candidate" : null,
     duplicateOf: r.duplicate_of ? String(r.duplicate_of) : null,
+    excludedReason: r.excluded_reason ? String(r.excluded_reason) : null,
     players: (players as Obj[]).map((p, i, a) => parsePlayer(p, i, a.length)),
   };
 }

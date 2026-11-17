@@ -196,7 +196,10 @@ export default function MainGroupPage() {
       {tab === "duos" && <DuoTab group={group} />}
       {tab === "matches" && (
         <MatchHistoryTab
-          matches={group.matches}
+          // 매치 기록에는 "없던 경기"도 흑백으로 함께 보여 준다 (통계에는 반영 안 됨)
+          matches={[...group.matches, ...(group.excludedMatches || [])].sort((a, b) =>
+            a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
+          )}
           groupId="main"
           onDelete={handleDeleteMatch}
         />

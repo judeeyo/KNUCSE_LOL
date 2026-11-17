@@ -39,7 +39,7 @@ const DEFAULTS = {
   matches: () => ({
     group_name: "컴학내전", created_at: new Date().toISOString(), game_duration: null, game_mode: "rift", game_id: null,
     bans: null, source: "collector", time_unknown: false, review_status: null, duplicate_of: null,
-    uploaded_at: new Date().toISOString(),
+    uploaded_at: new Date().toISOString(), excluded_reason: null,
   }),
   members: () => ({ real_name: null, tier: null, preferred_lanes: [], aliases: [], created_at: new Date().toISOString() }),
 };

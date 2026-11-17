@@ -13,8 +13,9 @@ import {
   buildRadarStats,
   type PlayerStats,
   type DuoRecord,
+  type BalancerPlayer,
 } from "./stats";
-import type { Group, Match, PlayerStat } from "./types";
+import type { Group, Lane, Match, PlayerStat } from "./types";
 
 // ─── Fixture helpers ───
 
@@ -445,5 +446,71 @@ describe("leaderboardMinGames", async () => {
     expect(leaderboardMinGames(50)).toBe(10);
     expect(leaderboardMinGames(105)).toBe(21);
     expect(leaderboardMinGames(400)).toBe(21);
+  });
+});
+
+describe("팀 밸런스 보강", async () => {
+  const { parseTierScore, balanceOptions, recentRosters } = await import("./stats");
+  const bp = (nickname: string, score: number, prefs?: Lane[]): BalancerPlayer => ({
+    nickname, score, gamesPlayed: 10, winRate: 50, avgKda: 3, preferredLanes: prefs,
+  });
+  const ten = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"].map((n, i) => bp(n, 8 - i * 0.5));
+
+  it("티어: 전 구간과 다양한 표기", () => {
+    expect(parseTierScore("브론즈 4")).toBe(2);
+    expect(parseTierScore("아이언 1")).toBe(1.75);
+    expect(parseTierScore("다이아2")).toBe(7.5);
+    expect(parseTierScore("D2")).toBe(7.5);
+    expect(parseTierScore("gold 3")).toBe(4.25);
+    expect(parseTierScore("그마")).toBe(8.6);
+    expect(parseTierScore("챌린저")).toBe(9.2);
+    expect(parseTierScore("모름")).toBeNull();
+    expect(parseTierScore("")).toBeNull();
+  });
+
+  it("판수가 적은 선수는 0 이 아니라 평균(5) 쪽으로 수렴", () => {
+    const g: Group = { id: "g", name: "g", inviteCode: "", createdAt: "", members: [], matches: [] };
+    void g;
+    const stats = [{ nickname: "new", gamesPlayed: 1, totalScore: 0 }, { nickname: "vet", gamesPlayed: 40, totalScore: 60 }] as PlayerStats[];
+    const [n, v] = getBalancerPlayers(stats, {});
+    expect(n.score).toBeGreaterThan(4); // 이전 방식이면 1판·0점 → 약 3.8
+    expect(v.score).toBeGreaterThan(5);
+    expect(n.parts?.tierKnown).toBe(false);
+  });
+
+  it("티어 미입력자는 입력된 선수들의 평균 티어", () => {
+    const stats = [{ nickname: "x", gamesPlayed: 0, totalScore: 0 }, { nickname: "y", gamesPlayed: 0, totalScore: 0 }] as PlayerStats[];
+    const [x, y] = getBalancerPlayers(stats, { x: "다이아 4" });
+    expect(x.parts?.tierScore).toBe(7);
+    expect(y.parts?.tierScore).toBe(7);
+  });
+
+  it("여러 조합을 균형 순으로, 블루/레드만 바뀐 중복 없이", () => {
+    const opts = balanceOptions(ten, 5);
+    expect(opts).toHaveLength(5);
+    for (let i = 1; i < opts.length; i++) expect(opts[i].diff + 1e-9).toBeGreaterThanOrEqual(0); // 정렬 기준은 objective
+    const keys = opts.map((o) => [...o.team1.map((p) => p.nickname)].sort().join(","));
+    expect(new Set(keys).size).toBe(5);
+    expect(opts.every((o) => o.team1.some((p) => p.nickname === "a"))).toBe(true);
+  });
+
+  it("같은 팀 / 다른 팀 고정", () => {
+    const [o] = balanceOptions(ten, 1, { together: [["a", "b"]], apart: [["c", "d"]] });
+    const t1 = new Set(o.team1.map((p) => p.nickname));
+    expect(t1.has("a")).toBe(t1.has("b"));
+    expect(t1.has("c")).not.toBe(t1.has("d"));
+    // 참가하지 않은 사람이 들어간 조건은 무시
+    expect(balanceOptions(ten, 1, { together: [["a", "zzz"]] })).toHaveLength(1);
+    // 불가능한 조건이면 빈 결과
+    expect(balanceOptions(ten.slice(0, 2), 1, { together: [["a", "b"]] })).toHaveLength(0);
+  });
+
+  it("최근 경기와 같은 팀 구성 피하기", () => {
+    const [best] = balanceOptions(ten, 1);
+    const roster = best.team1.map((p) => p.nickname);
+    const [next] = balanceOptions(ten, 1, { avoidRosters: [roster] });
+    expect([...next.team1.map((p) => p.nickname)].sort()).not.toEqual([...roster].sort());
+    const m = match([ps({ nickname: "a", team: "blue", win: true }), ps({ nickname: "b", team: "red", win: false })]);
+    expect(recentRosters([m])).toEqual([["a"], ["b"]]);
   });
 });

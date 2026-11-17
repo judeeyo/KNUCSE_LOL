@@ -1,4 +1,4 @@
-import type { Group, PlayerStat, Lane } from "./types";
+import type { Group, Match, PlayerStat, Lane } from "./types";
 
 // createdAt(ISO 문자열) 오름차순 비교 — 시간순에 의존하는 로직의 안정성 확보용
 function byCreatedAt<T extends { createdAt: string }>(a: T, b: T): number {
@@ -935,8 +935,31 @@ export interface BalanceResult {
  * 가장 좋은 조합부터 서로 다른 조합을 최대 `maxOptions` 개 돌려준다 (다시 섞기용).
  * 블루/레드만 바뀐 같은 편성은 하나로 친다.
  */
-export function balanceOptions(players: BalancerPlayer[], maxOptions = 5): BalanceResult[] {
+export interface BalanceConstraints {
+  /** 같은 팀이어야 하는 두 사람 */
+  together?: Array<[string, string]>;
+  /** 다른 팀이어야 하는 두 사람 */
+  apart?: Array<[string, string]>;
+  /** 피할 팀 구성 (최근 경기의 한쪽 팀 명단). 한 팀이라도 이 명단과 똑같으면 제외 */
+  avoidRosters?: string[][];
+}
+
+/** 최근 경기들의 팀 명단 (같은 사람들로 또 할 때 같은 팀이 반복되지 않게 하려는 용도) */
+export function recentRosters(matches: Match[], count = 3): string[][] {
+  return [...matches]
+    .sort(byCreatedAt)
+    .slice(-count)
+    .flatMap((m) => (["blue", "red"] as const).map((t) => m.players.filter((p) => p.team === t).map((p) => p.nickname)));
+}
+
+export function balanceOptions(
+  players: BalancerPlayer[],
+  maxOptions = 5,
+  constraints: BalanceConstraints = {}
+): BalanceResult[] {
   if (players.length < 2 || players.length > 10 || players.length % 2 !== 0) return [];
+  const sameSet = (a: string[], b: Set<string>) => a.length === b.size && a.every((x) => b.has(x));
+  const avoid = (constraints.avoidRosters || []).filter((r) => r.length === players.length / 2);
 
   const n = players.length;
   const teamSize = n / 2;
@@ -949,6 +972,12 @@ export function balanceOptions(players: BalancerPlayer[], maxOptions = 5): Balan
     if (team1[0].nickname !== anchor) continue;
     const team1Set = new Set(team1.map((p) => p.nickname));
     const team2 = sorted.filter((p) => !team1Set.has(p.nickname));
+    const team2Set = new Set(team2.map((p) => p.nickname));
+    // 고정 조건: 둘 중 한 명이라도 이번 참가자가 아니면 그 조건은 무시
+    const inGame = (n: string) => team1Set.has(n) || team2Set.has(n);
+    if ((constraints.together || []).some(([a, b]) => inGame(a) && inGame(b) && team1Set.has(a) !== team1Set.has(b))) continue;
+    if ((constraints.apart || []).some(([a, b]) => inGame(a) && inGame(b) && team1Set.has(a) === team1Set.has(b))) continue;
+    if (avoid.some((r) => sameSet(r, team1Set) || sameSet(r, team2Set))) continue;
     const score1 = team1.reduce((s, p) => s + p.score, 0);
     const score2 = team2.reduce((s, p) => s + p.score, 0);
     const diff = Math.abs(score1 - score2);
@@ -982,8 +1011,8 @@ export function balanceOptions(players: BalancerPlayer[], maxOptions = 5): Balan
 }
 
 /** 가장 좋은 조합 하나 (이전 API 호환) */
-export function balanceTeams(players: BalancerPlayer[]): BalanceResult | null {
-  return balanceOptions(players, 1)[0] ?? null;
+export function balanceTeams(players: BalancerPlayer[], constraints: BalanceConstraints = {}): BalanceResult | null {
+  return balanceOptions(players, 1, constraints)[0] ?? null;
 }
 
 function getCombinations<T>(arr: T[], size: number): T[][] {

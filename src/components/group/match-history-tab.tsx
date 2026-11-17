@@ -60,6 +60,12 @@ export function MatchHistoryTab({
             <div className="text-xs text-ink-tertiary">{dateMatches.length}경기</div>
           </div>
 
+          <div className="flex items-center gap-3 mb-3 -mt-1">
+            <div className="text-xs text-ink-tertiary">
+              {dateMatches.some((m) => m.excludedReason) &&
+                `통계 반영 ${dateMatches.filter((m) => !m.excludedReason).length}경기 · 제외 ${dateMatches.filter((m) => m.excludedReason).length}경기`}
+            </div>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
             {dateMatches.map((match) => (
               <MatchCard
@@ -100,8 +106,19 @@ function MatchCard({
   return (
     <div
       onClick={onClick}
+      title={match.excludedReason ? `${match.excludedReason} — 기록에 반영되지 않는 경기` : undefined}
       className="group relative rounded-lg border border-hairline bg-surface-1 hover:bg-surface-2 hover:border-hairline-strong cursor-pointer transition-fast overflow-hidden"
     >
+      {/* "없던 경기" 표시: 흰색 문구 (카드 내용은 아래에서 흑백 처리) */}
+      {match.excludedReason && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <span className="px-3 py-1 rounded-md bg-black/55 text-white text-lg sm:text-xl font-extrabold tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] -rotate-6 max-w-[90%] text-center break-words">
+            {match.excludedReason}
+          </span>
+        </div>
+      )}
+
+      <div className={match.excludedReason ? "grayscale-75 opacity-70" : undefined}>
       {/* Win indicator bar */}
       <div className={`absolute top-0 left-0 w-1 h-full ${blueWin ? "bg-blue-500" : "bg-red-500"}`} />
 
@@ -198,6 +215,7 @@ function MatchCard({
             <ChevronRight size={16} className="text-ink-tertiary/50" />
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

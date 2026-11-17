@@ -293,3 +293,12 @@ describe("내전 판별 (수집기 자료)", async () => {
     expect(naejeonViolation({ ...base, source: "backup-import", players: base.players.slice(0, 4) })).toBeNull();
   });
 });
+
+describe("없던 경기 (excluded_reason)", () => {
+  it("문구가 있으면 Match.excludedReason 으로 읽고, 백업 복원에서도 유지", () => {
+    const row = { ...legacyRows[0], excluded_reason: "Zeus's Law" };
+    expect(rowToMatch(row as never).excludedReason).toBe("Zeus's Law");
+    expect(rowToMatch(legacyRows[0] as never).excludedReason).toBeUndefined();
+    expect(parseImportPayload({ format: "naejeon-backup", matches: [row] }).matches[0].excludedReason).toBe("Zeus's Law");
+  });
+});

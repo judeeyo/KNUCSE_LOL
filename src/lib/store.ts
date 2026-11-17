@@ -59,8 +59,15 @@ export async function getAllMembers(): Promise<Member[]> {
 }
 
 export async function getGroup(): Promise<Group> {
-  const [matches, members] = await Promise.all([getAllMatches(), getAllMembers()]);
-  return { id: GROUP_NAME, name: GROUP_NAME, inviteCode: "", createdAt: "", members, matches };
+  const [all, members] = await Promise.all([getAllMatches(), getAllMembers()]);
+  // "없던 경기"는 통계에서 빼고 매치 기록 표시용으로만 따로 둔다
+  const matches = all.filter((m) => !m.excludedReason);
+  const excludedMatches = all.filter((m) => m.excludedReason);
+  return { id: GROUP_NAME, name: GROUP_NAME, inviteCode: "", createdAt: "", members, matches, excludedMatches };
+}
+
+export async function setMatchExcluded(matchId: string, reason: string | null) {
+  await adminFetch("setExcluded", { matchId, reason });
 }
 
 // ─── 쓰기 (관리자 비밀번호 필요 — 서버 /api/admin 경유) ───

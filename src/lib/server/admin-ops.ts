@@ -89,6 +89,18 @@ export async function updateMatch(
   must(await sb.from("matches").update(update).eq("id", input.matchId), "경기 수정");
 }
 
+/** "없던 경기" 표시/해제. reason 이 비어 있으면 해제 */
+export async function setMatchExcluded(sb: SupabaseClient, matchId: string, reason: string | null) {
+  const value = reason?.trim() ? reason.trim().slice(0, 40) : null;
+  const res = await sb.from("matches").update({ excluded_reason: value }).eq("id", matchId);
+  if (res.error) {
+    if (/excluded_reason/.test(res.error.message)) {
+      throw new Error("DB 에 excluded_reason 열이 없습니다. Supabase SQL Editor 에서 supabase/03_excluded_matches.sql 을 실행해 주세요");
+    }
+    throw new Error(`경기 제외 설정 실패: ${res.error.message}`);
+  }
+}
+
 export async function deleteMatch(sb: SupabaseClient, matchId: string) {
   must(await sb.from("matches").delete().eq("id", matchId), "경기 삭제");
 }

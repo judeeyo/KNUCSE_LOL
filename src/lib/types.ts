@@ -4,7 +4,8 @@ export interface Group {
   inviteCode: string;
   createdAt: string;
   members: Member[];
-  matches: Match[];
+  matches: Match[]; // 통계에 반영되는 경기만
+  excludedMatches?: Match[]; // "없던 경기"로 표시된 경기 (매치 기록에만 흑백으로 보임)
 }
 
 export interface Member {
@@ -31,6 +32,7 @@ export interface Match {
   gameId?: string; // Riot gameId (수기·과거 기록은 없음)
   timeUnknown?: boolean; // true면 날짜만 신뢰 (시각 미상)
   missing?: MissingStats; // 이 경기에서 수집되지 않은 지표
+  excludedReason?: string; // 있으면 "없던 경기" — 어떤 통계에도 반영하지 않고 이 문구를 표시
 }
 
 export type MatchSource = "collector" | "history" | "manual" | "legacy-import" | "backup-import";

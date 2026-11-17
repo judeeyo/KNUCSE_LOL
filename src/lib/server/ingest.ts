@@ -234,6 +234,8 @@ export async function ingestMatches(
       row.id = matchId;
       row.review_status = candidate ? "duplicate_candidate" : inc.reviewStatus;
       row.duplicate_of = candidate ? decision.existingId : inc.duplicateOf;
+      // 백업 복원 시 "없던 경기" 표시도 그대로 (컬럼이 없는 DB 를 위해 값이 있을 때만 보냄)
+      if (inc.excludedReason) row.excluded_reason = inc.excludedReason;
       if (!dryRun) {
         const { error } = await sb.from("matches").insert(row);
         if (error) throw new Error(`경기 저장 실패: ${error.message}`);

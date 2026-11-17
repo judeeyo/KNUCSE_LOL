@@ -242,3 +242,21 @@ describe("중복 판정", () => {
     expect(decideIngest(pendingOnly, inc(asCollector(legacyRows[7], 5558)))).toEqual({ action: "insert" });
   });
 });
+
+describe("Supabase 주소 정규화", async () => {
+  const { normalizeSupabaseUrl } = await import("./supabase");
+  it.each([
+    ["https://abcdefghijklmnopqrst.supabase.co", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["https://abcdefghijklmnopqrst.supabase.co/", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["https://abcdefghijklmnopqrst.supabase.co/rest/v1/", "https://abcdefghijklmnopqrst.supabase.co"],
+    [" 'https://abcdefghijklmnopqrst.supabase.co/rest/v1' ", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["abcdefghijklmnopqrst.supabase.co", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["https://supabase.com/dashboard/project/abcdefghijklmnopqrst/settings/api", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["abcdefghijklmnopqrst", "https://abcdefghijklmnopqrst.supabase.co"],
+    ["http://127.0.0.1:54321", "http://127.0.0.1:54321"],
+    ["http://127.0.0.1:54321/rest/v1/", "http://127.0.0.1:54321"],
+    ["/_db", "/_db"],
+  ])("%s → %s", (input, expected) => {
+    expect(normalizeSupabaseUrl(input)).toBe(expected);
+  });
+});

@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // 수집기 다운로드 API가 런타임에 readFileSync로 읽는 파일들을 서버 번들에 포함
   outputFileTracingIncludes: {
     "/api/collector": ["./collector/**/*"],
+    // 공유 미리보기 이미지에 쓰는 한글 폰트
+    "/opengraph-image": ["./node_modules/pretendard/dist/public/static/Pretendard-Bold.otf"],
+    "/group/main/match/[matchId]/opengraph-image": ["./node_modules/pretendard/dist/public/static/Pretendard-Bold.otf"],
   },
   // 첫 화면을 서버 리다이렉트로 즉시 이동 (기존: 클라이언트에서 debug/seed API 순차 호출 후 이동 → 수 초 지연)
   // 미리보기 전용: PREVIEW_DB_PROXY 가 설정된 빌드에서만 /_db/* 를 로컬 가짜 DB 로 넘긴다.

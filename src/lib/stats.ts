@@ -987,6 +987,8 @@ export interface BalanceConstraints {
   apart?: Array<[string, string]>;
   /** 피할 팀 구성 (최근 경기의 한쪽 팀 명단). 한 팀이라도 이 명단과 똑같으면 제외 */
   avoidRosters?: string[][];
+  /** 점수 차이를 먼저 최소화하고 동점이면 포지션 적합도로 정렬 */
+  scoreFirst?: boolean;
 }
 
 /** 최근 경기들의 팀 명단 (같은 사람들로 또 할 때 같은 팀이 반복되지 않게 하려는 용도) */
@@ -1044,7 +1046,9 @@ export function balanceOptions(
     candidates.push({ team1: t1, team2: t2, diff, laneFit, objective });
   }
 
-  candidates.sort((a, b) => a.objective - b.objective);
+  candidates.sort((a, b) => constraints.scoreFirst
+    ? a.diff - b.diff || b.laneFit - a.laneFit
+    : a.objective - b.objective);
   const laneOrder = (p: BalancerPlayer) => (p.assignedLane ? BALANCE_LANES.indexOf(p.assignedLane) : 0);
   const byLane = (team: BalancerPlayer[]) => (withLanes ? [...team].sort((a, b) => laneOrder(a) - laneOrder(b)) : team);
   return candidates.slice(0, maxOptions).map((c) => ({
@@ -1053,6 +1057,19 @@ export function balanceOptions(
     diff: Math.round(c.diff * 100) / 100,
     laneFit: Math.round(c.laneFit * 100),
   }));
+}
+
+/** 10명을 중복 없이 5짝으로 지정한 경우에만 각 짝을 상대 팀으로 배치한다. */
+export function balancePairedTeams(
+  players: BalancerPlayer[],
+  pairs: Array<[string, string]>,
+  avoidRosters: string[][] = []
+): BalanceResult[] {
+  const names = pairs.flat();
+  if (players.length !== 10 || pairs.length !== 5 || new Set(names).size !== 10 ||
+      players.some((p) => !names.includes(p.nickname))) return [];
+  // 2^5개 중 블루/레드만 바뀐 거울상을 제외하면 최대 16개.
+  return balanceOptions(players, 16, { apart: pairs, avoidRosters, scoreFirst: true });
 }
 
 /** 가장 좋은 조합 하나 (이전 API 호환) */

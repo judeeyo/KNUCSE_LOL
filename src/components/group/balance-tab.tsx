@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { BalancePairEditor, type BalancePair } from "./balance-pair-editor";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink } from "lucide-react";
@@ -9,6 +10,7 @@ import type { Group, Lane } from "@/lib/types";
 import {
   getBalancerPlayers,
   balanceOptions,
+  balancePairedTeams,
   derivePreferredLanes,
   recentRosters,
   type BalancerPlayer,
@@ -52,6 +54,8 @@ function scoreTitle(p: BalancerPlayer): string {
 type Pair = { a: string; b: string; kind: "together" | "apart" };
 
 export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[]; group: Group }) {
+  const [mode, setMode] = useState<"auto" | "paired">("auto");
+  const [balancePairs, setBalancePairs] = useState<BalancePair[]>(Array.from({ length: 5 }, () => ["", ""]));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [options, setOptions] = useState<BalanceResult[]>([]);
   const [optionIdx, setOptionIdx] = useState(0);
@@ -106,7 +110,15 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
   const missingTier = someTier ? selectedPlayers.filter((p) => !p.parts?.tierKnown) : [];
   const activePairs = pairs.filter((p) => selected.has(p.a) && selected.has(p.b));
 
+  const labels = Object.fromEntries(allPlayers.map((p) => {
+    const realName = group.members.find((m) => m.nickname === p.nickname)?.realName;
+    return [p.nickname, realName ? `${realName} (${p.nickname})` : p.nickname];
+  }));
+  const pairsComplete = selected.size === 10 && new Set(balancePairs.flat().filter(Boolean)).size === 10 &&
+    balancePairs.flat().every((name) => selected.has(name));
+
   const togglePlayer = (nickname: string) => {
+    setBalancePairs((prev) => prev.map((pair) => pair.map((name) => name === nickname ? "" : name) as BalancePair));
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(nickname)) next.delete(nickname);
@@ -122,12 +134,15 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
       apart: activePairs.filter((p) => p.kind === "apart").map((p) => [p.a, p.b] as [string, string]),
       avoidRosters: avoidRecent ? recentRosters(group.matches, 3) : [],
     };
-    setOptions(balanceOptions(selectedPlayers, 5, constraints));
+    setOptions(mode === "paired"
+      ? balancePairedTeams(selectedPlayers, balancePairs, constraints.avoidRosters)
+      : balanceOptions(selectedPlayers, 5, constraints));
     setOptionIdx(0);
     setRan(true);
   };
 
   const selectAll = () => {
+    setBalancePairs(Array.from({ length: 5 }, () => ["", ""]));
     if (selected.size === Math.min(allPlayers.length, 10)) {
       setSelected(new Set());
     } else {
@@ -152,6 +167,14 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
 
   return (
     <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-2" role="group" aria-label="팀 편성 방식">
+        {([["auto", "자동 팀 편성"], ["paired", "밸런스 짝으로 편성"]] as const).map(([value, label]) => (
+          <Button key={value} variant={mode === value ? "primary" : "secondary"}
+            className="min-w-0 whitespace-normal px-2" aria-pressed={mode === value} onClick={() => { setMode(value); clearResult(); }}>
+            {label}
+          </Button>
+        ))}
+      </div>
       {/* Instructions */}
       <Card className="flex items-start gap-3 py-3 px-4">
         <Users size={18} className="text-primary shrink-0 mt-0.5" />
@@ -182,9 +205,12 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
             const memberTier = tierOverrides[player.nickname];
 
             return (
-              <div
+              <button
+                type="button"
+                aria-pressed={isSelected}
+                disabled={!isSelected && selected.size === 10}
                 key={player.nickname}
-                className={`flex items-center gap-3 p-3 rounded-xl border transition-fast cursor-pointer ${
+                className={`text-left flex items-center gap-3 p-3 rounded-xl border transition-fast cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                   isSelected
                     ? "bg-primary/5 border-primary/30"
                     : "bg-surface-1 border-hairline hover:border-hairline-strong"
@@ -201,7 +227,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
 
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-x-2">
-                    <span className="font-medium text-ink text-sm break-all">{player.nickname}</span>
+                    <span className="font-medium text-ink text-sm break-all">{labels[player.nickname]}</span>
                     {memberTier && (
                       <span className={`text-xs font-bold ${getTierColor(memberTier)}`}>
                         {memberTier}
@@ -218,11 +244,20 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
                 <span className="text-xs text-ink-subtle font-mono w-10 text-right shrink-0" title={scoreTitle(player)}>
                   {player.score.toFixed(1)}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
+
+      {mode === "paired" && (
+        <Card>
+          {selected.size === 10 ? (
+            <BalancePairEditor players={selectedPlayers} pairs={balancePairs} labels={labels}
+              onChange={(next) => { setBalancePairs(next); clearResult(); }} />
+          ) : <p className="text-sm text-ink-subtle">참가자 10명을 선택하면 밸런스 짝을 지정할 수 있습니다. ({selected.size}/10)</p>}
+        </Card>
+      )}
 
       {/* Options */}
       <Card className="space-y-3">
@@ -240,7 +275,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
           <span>최근 3경기와 똑같은 팀 구성은 피하기 (같은 멤버로 연달아 할 때 매번 같은 팀이 나오지 않게)</span>
         </label>
 
-        <div className="space-y-2">
+        {mode === "auto" && <div className="space-y-2">
           <div className="text-xs text-ink-subtle">두 사람 고정</div>
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
             <select
@@ -306,7 +341,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
               })}
             </div>
           )}
-        </div>
+        </div>}
       </Card>
 
       {missingTier.length > 0 && (
@@ -325,20 +360,30 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
         <Button
           size="lg"
           onClick={handleBalance}
-          disabled={selected.size < 2 || selected.size % 2 !== 0}
+          disabled={mode === "paired" ? !pairsComplete : selected.size < 2 || selected.size % 2 !== 0}
         >
           <Shuffle size={18} />
-          팀 밸런스 ({selected.size}명)
+          {mode === "paired" ? "짝별 좌우 조합 비교" : `팀 밸런스 (${selected.size}명)`}
         </Button>
       </div>
 
+      {mode === "paired" && selected.size === 10 && !pairsComplete && (
+        <p className="text-xs text-center text-ink-subtle">짝을 5개 모두 지정해 주세요. (현재 {balancePairs.filter(([a, b]) => a && b).length}/5)</p>
+      )}
       {selected.size > 0 && selected.size % 2 !== 0 && (
         <p className="text-xs text-center text-ink-subtle">짝수 인원만 밸런스를 맞출 수 있습니다</p>
       )}
 
       {ran && options.length === 0 && (
         <p className="text-sm text-center text-lose break-keep">
-          조건을 모두 만족하는 편성이 없습니다. 고정 조건이나 &quot;최근 경기와 같은 팀 피하기&quot;를 줄여 보세요.
+          {mode === "paired" ? "최근 경기 제외 조건 때문에 가능한 편성이 없습니다. 최근 3경기와 같은 팀 피하기를 해제해 주세요." : "조건을 모두 만족하는 편성이 없습니다. 고정 조건이나 최근 경기와 같은 팀 피하기를 줄여 보세요."}
+        </p>
+      )}
+
+      {mode === "paired" && pairsComplete && (
+        <p className="text-xs text-center text-ink-subtle break-keep">
+          좌우만 뒤집힌 동일 편성을 제외한 최대 16개 조합을 비교합니다.
+          점수 차이가 작은 순서로, 동점이면 포지션 만족도가 높은 순서로 추천합니다.
         </p>
       )}
 
@@ -366,6 +411,31 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
             )}
           </div>
 
+          {mode === "paired" && (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="짝 편성 결과 비교">
+              {options.map((option, index) => (
+                <button key={index} aria-pressed={optionIdx === index}
+                  onClick={() => setOptionIdx(index)}
+                  className={`rounded-lg border px-3 py-2 text-xs ${optionIdx === index ? "border-primary text-primary bg-primary/10" : "border-hairline text-ink-subtle"}`}>
+                  {index + 1}안 · 차이 {option.diff.toFixed(2)} · 포지션 {option.laneFit}%
+                </button>
+              ))}
+            </div>
+          )}
+          {mode === "paired" && (
+            <Card className="space-y-2">
+              <h3 className="text-sm font-semibold">짝별 배치 확인</h3>
+              <div className="grid grid-cols-2 gap-2 text-xs text-ink-subtle"><span>블루팀</span><span>레드팀</span></div>
+              {balancePairs.map(([a, b], index) => {
+                const blue = result.team1.some((p) => p.nickname === a) ? a : b;
+                const red = blue === a ? b : a;
+                return <div key={index} className="grid grid-cols-2 gap-2 text-sm">
+                  <span className="min-w-0 break-words text-blue-400">{labels[blue]}</span>
+                  <span className="min-w-0 break-words text-red-400">{labels[red]}</span>
+                </div>;
+              })}
+            </Card>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TeamCard team={result.team1} label="블루팀" color="blue" tiers={tierOverrides} />
             <TeamCard team={result.team2} label="레드팀" color="red" tiers={tierOverrides} />

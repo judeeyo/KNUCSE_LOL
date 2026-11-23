@@ -1,11 +1,12 @@
 "use client";
 
 import { estimateRatings, RATING_VERSION } from "@/lib/rating-model";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { analyzeTeams, buildHistoryIndex, type TeamAnalysis } from "@/lib/team-analysis";
 import { BalancePairEditor, type BalancePair } from "./balance-pair-editor";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink } from "lucide-react";
+import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink, Brain } from "lucide-react";
 import type { PlayerStats } from "@/lib/stats";
 import type { Group, Lane } from "@/lib/types";
 import {
@@ -54,6 +55,11 @@ function scoreTitle(p: BalancerPlayer): string {
 
 type Pair = { a: string; b: string; kind: "together" | "apart" };
 
+/** 보여 줄 추천 편성 수 (많으면 고르기 어렵다는 의견으로 3개) */
+const MAX_OPTIONS = 3;
+/** 버튼을 누른 뒤 "계산 중" 표시를 보여 주는 최소 시간. 계산은 즉시 끝나지만 눌렸다는 느낌을 주기 위함 */
+const RUN_FEEDBACK_MS = 450;
+
 export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[]; group: Group }) {
   const [ratingMethod, setRatingMethod] = useState<"legacy" | "context">("legacy");
   const [mode, setMode] = useState<"auto" | "paired">("auto");
@@ -67,13 +73,32 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
   const [pairA, setPairA] = useState("");
   const [pairB, setPairB] = useState("");
   const [pairKind, setPairKind] = useState<Pair["kind"]>("together");
+  const [running, setRunning] = useState(false);
+  const [runId, setRunId] = useState(0);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const runTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const result = options[optionIdx] ?? null;
+  const history = useMemo(() => buildHistoryIndex(group.matches), [group]);
+  const analyses = useMemo(() => options.map((o) => analyzeTeams(o.team1, o.team2, history)), [options, history]);
+  const analysis = analyses[optionIdx] ?? null;
 
   const clearResult = () => {
+    if (runTimer.current) clearTimeout(runTimer.current);
+    setRunning(false);
     setOptions([]);
     setOptionIdx(0);
     setRan(false);
   };
+
+  useEffect(() => () => { if (runTimer.current) clearTimeout(runTimer.current); }, []);
+
+  // 결과가 나오면 결과 위치로 부드럽게 이동하고 제목에 포커스 (키보드·화면낭독기 사용자도 결과로 바로 이동)
+  useEffect(() => {
+    if (!runId || !resultRef.current) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    resultRef.current.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    resultRef.current.focus({ preventScroll: true });
+  }, [runId]);
 
   // Build tier overrides from member data
   const tierOverrides = useMemo(() => {
@@ -142,11 +167,20 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
       apart: activePairs.filter((p) => p.kind === "apart").map((p) => [p.a, p.b] as [string, string]),
       avoidRosters: avoidRecent ? recentRosters(group.matches, 3) : [],
     };
-    setOptions(mode === "paired"
-      ? balancePairedTeams(selectedPlayers, balancePairs, constraints.avoidRosters)
-      : balanceOptions(selectedPlayers, 5, constraints));
-    setOptionIdx(0);
-    setRan(true);
+    const next = mode === "paired"
+      ? balancePairedTeams(selectedPlayers, balancePairs, constraints.avoidRosters).slice(0, MAX_OPTIONS)
+      : balanceOptions(selectedPlayers, MAX_OPTIONS, constraints);
+    if (runTimer.current) clearTimeout(runTimer.current);
+    setOptions([]);
+    setRan(false);
+    setRunning(true);
+    runTimer.current = setTimeout(() => {
+      setOptions(next);
+      setOptionIdx(0);
+      setRan(true);
+      setRunning(false);
+      setRunId((n) => n + 1);
+    }, RUN_FEEDBACK_MS);
   };
 
   const selectAll = () => {
@@ -389,10 +423,11 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
         <Button
           size="lg"
           onClick={handleBalance}
-          disabled={mode === "paired" ? !pairsComplete : selected.size < 2 || selected.size % 2 !== 0}
+          aria-busy={running}
+          disabled={running || (mode === "paired" ? !pairsComplete : selected.size < 2 || selected.size % 2 !== 0)}
         >
-          <Shuffle size={18} />
-          {mode === "paired" ? "짝별 좌우 조합 비교" : `팀 밸런스 (${selected.size}명)`}
+          {running ? <RefreshCw size={18} className="animate-spin" /> : <Shuffle size={18} />}
+          {running ? "팀 짜는 중…" : mode === "paired" ? "짝으로 팀 짜기" : `팀 짜기 (${selected.size}명)`}
         </Button>
       </div>
 
@@ -411,18 +446,30 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
 
       {mode === "paired" && pairsComplete && (
         <p className="text-xs text-center text-ink-subtle break-keep">
-          좌우만 뒤집힌 동일 편성을 제외한 최대 16개 조합을 비교합니다.
-          점수 차이가 작은 순서로, 동점이면 포지션 만족도가 높은 순서로 추천합니다.
+          각 짝을 블루/레드로 나누는 모든 경우를 비교해 점수 차이가 작은 상위 {MAX_OPTIONS}개를 추천합니다
+          (동점이면 포지션 만족도가 높은 순).
         </p>
+      )}
+
+      {/* 계산 중 자리 표시 (결과가 나올 자리에 미리 보여 버튼이 동작한다는 걸 알 수 있게) */}
+      {running && (
+        <div className="space-y-3" aria-live="polite">
+          <p className="flex items-center justify-center gap-2 text-sm text-ink-muted">
+            <RefreshCw size={14} className="animate-spin text-primary" /> 가능한 편성을 비교하는 중…
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {[0, 1].map((i) => <div key={i} className="h-40 animate-pulse rounded-xl border border-hairline bg-surface-1" />)}
+          </div>
+        </div>
       )}
 
       {/* Result */}
       {result && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+        <div key={runId} ref={resultRef} tabIndex={-1} className="result-reveal space-y-4 scroll-mt-28 outline-none" aria-label="팀 편성 결과">
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
             <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
               <Zap size={16} className="text-primary shrink-0" />
-              {options.length > 1 ? `추천 ${optionIdx + 1}/${options.length}` : "팀 편성 완료"}
+              {options.length > 1 ? `추천 편성 ${options.length}개` : "팀 편성 완료"}
             </span>
             <span className="text-xs text-ink-subtle whitespace-nowrap">
               점수 차이 <span className="text-primary font-bold">{result.diff.toFixed(2)}</span>
@@ -432,38 +479,40 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
                 포지션 만족도 <span className="text-primary font-bold">{result.laneFit}%</span>
               </span>
             )}
-            {options.length > 1 && (
-              <Button size="sm" variant="secondary" onClick={() => setOptionIdx((i) => (i + 1) % options.length)}>
-                <RefreshCw size={13} />
-                다른 조합
-              </Button>
-            )}
           </div>
 
-          {mode === "paired" && (
-            <div className="flex flex-wrap gap-2" role="group" aria-label="짝 편성 결과 비교">
-              {options.map((option, index) => (
-                <button key={index} aria-pressed={optionIdx === index}
-                  onClick={() => setOptionIdx(index)}
-                  className={`rounded-lg border px-3 py-2 text-xs ${optionIdx === index ? "border-primary text-primary bg-primary/10" : "border-hairline text-ink-subtle"}`}>
-                  {index + 1}안 · 차이 {option.diff.toFixed(2)} · 포지션 {option.laneFit}%
-                </button>
-              ))}
+          {options.length > 1 && (
+            <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }} role="group" aria-label="추천 편성 선택">
+              {options.map((option, index) => {
+                const a = analyses[index];
+                return (
+                  <button key={index} type="button" aria-pressed={optionIdx === index} onClick={() => setOptionIdx(index)}
+                    className={`min-w-0 rounded-lg border px-2 py-2 text-left text-xs transition-fast cursor-pointer ${
+                      optionIdx === index ? "border-primary bg-primary/10 text-ink" : "border-hairline bg-surface-1 text-ink-subtle hover:border-hairline-strong"
+                    }`}>
+                    <div className="font-semibold">{index + 1}안{index === 0 && <span className="ml-1 text-primary-hover">추천</span>}</div>
+                    <div className="truncate">차이 {option.diff.toFixed(2)}<span className="hidden sm:inline"> · </span><br className="sm:hidden" />포지션 {option.laneFit}%</div>
+                    {a && <div className={`truncate ${verdictColor(a)}`}>{a.label}</div>}
+                  </button>
+                );
+              })}
             </div>
           )}
+
+          {analysis && <VerdictCard analysis={analysis} />}
+
           {mode === "paired" && (
-            <Card className="space-y-2">
-              <h3 className="text-sm font-semibold">짝별 배치 확인</h3>
-              <div className="grid grid-cols-2 gap-2 text-xs text-ink-subtle"><span>블루팀</span><span>레드팀</span></div>
-              {balancePairs.map(([a, b], index) => {
+            <div className="flex flex-wrap justify-center gap-1.5 text-xs" aria-label="짝별 배치">
+              {balancePairs.filter(([a, b]) => a && b).map(([a, b], index) => {
                 const blue = result.team1.some((p) => p.nickname === a) ? a : b;
                 const red = blue === a ? b : a;
-                return <div key={index} className="grid grid-cols-2 gap-2 text-sm">
-                  <span className="min-w-0 break-words text-blue-400">{labels[blue]}</span>
-                  <span className="min-w-0 break-words text-red-400">{labels[red]}</span>
-                </div>;
+                return <span key={index} className="inline-flex max-w-full items-center gap-1 rounded-md border border-hairline bg-surface-1 px-2 py-1">
+                  <span className="truncate text-blue-400">{blue}</span>
+                  <span className="text-ink-tertiary">⇄</span>
+                  <span className="truncate text-red-400">{red}</span>
+                </span>;
               })}
-            </Card>
+            </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <TeamCard team={result.team1} label="블루팀" color="blue" tiers={displayTiers} experimental={ratingMethod === "context"} />
@@ -529,6 +578,49 @@ function TeamCard({
           </div>
         ))}
       </div>
+    </Card>
+  );
+}
+
+function verdictColor(a: TeamAnalysis): string {
+  if (a.favored === "blue") return "text-blue-400";
+  if (a.favored === "red") return "text-red-400";
+  return "text-ink-muted";
+}
+
+/** 우세/열세 판정 카드: 예상 승률 막대 + 영향이 큰 이유 최대 3개 */
+function VerdictCard({ analysis }: { analysis: TeamAnalysis }) {
+  const blue = Math.round(analysis.blueWinProb * 100);
+  const red = 100 - blue;
+  return (
+    <Card className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+          <Brain size={15} className="text-primary shrink-0" /> AI 판정
+          <span className={`ml-1 ${verdictColor(analysis)}`}>{analysis.label}</span>
+        </span>
+        <span className="text-xs text-ink-subtle font-mono">블루 {blue}% : {red}% 레드</span>
+      </div>
+      <div className="flex h-2 overflow-hidden rounded-full bg-surface-3" role="img" aria-label={`예상 승률 블루 ${blue}%, 레드 ${red}%`}>
+        <div className="bg-blue-500/80 transition-all duration-500" style={{ width: `${blue}%` }} />
+        <div className="bg-red-500/80 transition-all duration-500" style={{ width: `${red}%` }} />
+      </div>
+      {analysis.reasons.length > 0 ? (
+        <ul className="space-y-1 text-xs text-ink-muted">
+          {analysis.reasons.map((r, i) => (
+            <li key={i} className="flex items-start gap-1.5 break-keep">
+              <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${r.favors === "blue" ? "bg-blue-400" : "bg-red-400"}`} aria-hidden="true" />
+              <span>{r.text}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-xs text-ink-subtle">눈에 띄는 차이가 없습니다.</p>
+      )}
+      <p className="text-[11px] text-ink-tertiary break-keep">
+        내전 기록(팀 점수 합·비선호 라인·팀원 궁합·맞라인 상대 전적)으로 계산한 예상치입니다.
+        {analysis.lowSample.length > 0 && ` 판수가 적은 선수(${analysis.lowSample.slice(0, 4).join(", ")}${analysis.lowSample.length > 4 ? " 외" : ""})가 있어 신뢰도가 낮습니다.`}
+      </p>
     </Card>
   );
 }

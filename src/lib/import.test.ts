@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseImportPayload, parseImportText, parseCsv, validateIncoming, type IncomingMatch } from "./import-parse";
-import { decideIngest, keepExistingNicknames, type ExistingMatch } from "./ingest-plan";
+import { decideIngest, keepExistingNicknames, keepRatingEvidence, type ExistingMatch } from "./ingest-plan";
 import { detectMissing, matchFingerprint, normalizePlayers, rowToMatch, kstDate } from "./match-normalize";
 import { buildPlayerStats, buildChampionStats, buildRadarStats, computeAwards } from "./stats";
 import type { Group } from "./types";
@@ -310,6 +310,30 @@ describe("계정 정보 보존", () => {
     const p = parseImportPayload(one, "collector").matches[0].players[0];
     expect([p.puuid, p.tagLine, p.soloTier]).toEqual(["abc", "KR1", "골드 2"]);
     expect(parseImportPayload(asCollector(legacyRows[0], 2), "collector").matches[0].players[0].puuid).toBeUndefined();
+  });
+});
+
+describe("점수 개선용 수집 지표", () => {
+  it("구버전 재업로드가 확보한 랭크와 구간 지표를 지우지 않는다", () => {
+    const previous = { nickname: "a", rankObservedAt: "2026-11-23T00:00:00Z", rankSnapshot: { soloTier: "실버 2" }, phaseStats: { "10": { timestamp: 600000, gold: 1, xp: 2, cs: 3 } } };
+    const merged = keepRatingEvidence([previous], [{ nickname: "a" }]);
+    expect(merged[0]).toMatchObject(previous);
+  });
+
+  it("조회 시각·큐별 랭크·구간 지표를 가져오기와 복원에서 유지한다", () => {
+    const one = asCollector(legacyRows[0], 1);
+    const extra = {
+      rankObservedAt: "2026-11-23T12:00:00Z",
+      rankSnapshot: { soloTier: "실버 2", previousSoloTier: "골드 4", flexTier: "다이아 1" },
+      phaseStats: { "10": { timestamp: 600000, gold: 4000, xp: 5000, cs: 80 } }, phaseStatsVersion: 1,
+    };
+    one.players[0] = { ...one.players[0], ...extra };
+    const p = parseImportPayload(one, "collector").matches[0].players[0];
+    expect(p.rankSnapshot).toEqual(extra.rankSnapshot);
+    expect(p.phaseStats).toEqual(extra.phaseStats);
+    expect(p.rankObservedAt).toBe("2026-11-23T12:00:00.000Z");
+    const malformed = { ...one, players: [{ ...one.players[0], phaseStats: { "10": { timestamp: 1, gold: -1 } } }, ...one.players.slice(1)] };
+    expect(parseImportPayload(malformed, "collector").matches[0].players[0].phaseStatsVersion).toBeUndefined();
   });
 });
 

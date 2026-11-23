@@ -458,5 +458,38 @@ class CollectorTest(unittest.TestCase):
             collector._instance_socket = None
 
 
+class RatingExtensionTests(unittest.TestCase):
+    def test_rank_snapshot_distinguishes_queues_and_observation_time(self):
+        from unittest.mock import patch
+        stats = {"queueMap": {
+            "RANKED_SOLO_5x5": {"tier": "SILVER", "division": "II", "previousSeasonEndTier": "GOLD", "previousSeasonEndDivision": "IV"},
+            "RANKED_FLEX_SR": {"tier": "DIAMOND", "division": "I"}}}
+        match = {"players": [{"nickname": "a", "puuid": "p"}]}
+        with patch.object(collector, "lcu_request", return_value=stats):
+            collector.attach_solo_tiers({}, match)
+        player = match["players"][0]
+        self.assertEqual(player["rankSnapshot"], {"soloTier": "실버 2", "previousSoloTier": "골드 4", "flexTier": "다이아 1"})
+        self.assertIn("rankObservedAt", player)
+
+    def test_phase_stats_keeps_missing_fifteen_minute_as_missing(self):
+        from unittest.mock import patch
+        match = {"players": [{"puuid": "p"}, {"puuid": "unknown"}]}
+        game = {"participantIdentities": [{"participantId": 1, "player": {"puuid": "p"}}]}
+        timeline = {"frames": [{"timestamp": 600000, "participantFrames": {"1": {
+            "totalGold": 4000, "xp": 5000, "minionsKilled": 80, "jungleMinionsKilled": 2}}}]}
+        with patch.object(collector, "lcu_request", return_value=timeline):
+            collector.attach_phase_stats({}, match, 1, game)
+        self.assertEqual(match["players"][0]["phaseStats"]["10"]["cs"], 82)
+        self.assertNotIn("15", match["players"][0]["phaseStats"])
+        self.assertNotIn("phaseStats", match["players"][1])
+
+    def test_timeline_failure_preserves_match(self):
+        from unittest.mock import patch
+        match = {"players": [{"puuid": "p"}]}
+        with patch.object(collector, "lcu_request", return_value=None):
+            collector.attach_phase_stats({}, match, 1, {"participantIdentities": []})
+        self.assertEqual(match, {"players": [{"puuid": "p"}]})
+
+
 if __name__ == "__main__":
     unittest.main()

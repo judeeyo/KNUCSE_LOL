@@ -6,7 +6,7 @@ import { normalizeChampionName } from "@/lib/champions";
 import { normalizeNickname } from "@/lib/nicknames";
 import { assignLanesByOrder } from "@/lib/lanes";
 import { GROUP_NAME } from "@/lib/match-normalize";
-import { decideIngest, keepExistingNicknames, type ExistingMatch, type IngestDecision } from "@/lib/ingest-plan";
+import { decideIngest, keepExistingNicknames, keepRatingEvidence, type ExistingMatch, type IngestDecision } from "@/lib/ingest-plan";
 import { naejeonViolation, validateIncoming, type IncomingMatch, type IncomingMember } from "@/lib/import-parse";
 import type { PlayerStat } from "@/lib/types";
 
@@ -211,7 +211,7 @@ export async function ingestMatches(
       const existingRow = snap.existing.find((x) => x.id === target);
       if (existingRow) {
         const kept = keepExistingNicknames(existingRow.players, players);
-        players = kept.players;
+        players = keepRatingEvidence(existingRow.players, kept.players);
         noteRenames(kept.renames);
       }
     }

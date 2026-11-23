@@ -88,6 +88,7 @@ export function rowToMatch(row: MatchRow): Match {
     timeUnknown: Boolean(row.time_unknown),
     missing,
     excludedReason: row.excluded_reason?.trim() || undefined,
+    uploadedAt: row.uploaded_at || undefined,
   };
 }
 

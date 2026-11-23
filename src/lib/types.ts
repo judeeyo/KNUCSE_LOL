@@ -26,6 +26,7 @@ export interface Match {
   groupId: string;
   createdAt: string;
   gameDuration: string;
+  uploadedAt?: string;
   players: PlayerStat[];
   bans?: { blue: string[]; red: string[] }; // 밴 챔피언 (드래프트 모드만, 밴 순서대로)
   source?: MatchSource;
@@ -89,7 +90,11 @@ export interface PlayerStat {
   // 수집기가 기록하는 계정 정보 (예전 기록에는 없음)
   puuid?: string;
   tagLine?: string;
-  soloTier?: string; // 업로드 시점 솔랭 티어 — 기록용, 팀 밸런스에는 자동으로 쓰지 않음
+  soloTier?: string;
+  rankObservedAt?: string;
+  rankSnapshot?: { soloTier?: string; previousSoloTier?: string; flexTier?: string };
+  phaseStatsVersion?: number;
+  phaseStats?: Partial<Record<"10" | "15", { timestamp: number; gold: number; xp: number; cs: number }>>;
   // 아이템·주문·룬 (수집기 새 버전부터)
   items?: number[]; // 0~5 아이템, 6 장신구 (0 = 빈 칸)
   spell1Id?: number;

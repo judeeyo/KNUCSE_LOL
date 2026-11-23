@@ -39,6 +39,10 @@ export interface IncomingPlayer {
   tagLine?: string;
   /** 업로드 시점의 솔랭 티어 (예: "다이아 2"). 기록만 하고 팀 밸런스에는 자동으로 쓰지 않음 */
   soloTier?: string;
+  rankObservedAt?: string;
+  rankSnapshot?: { soloTier?: string; previousSoloTier?: string; flexTier?: string };
+  phaseStatsVersion?: number;
+  phaseStats?: Partial<Record<"10" | "15", { timestamp: number; gold: number; xp: number; cs: number }>>;
   items?: number[];
   spell1Id?: number;
   spell2Id?: number;
@@ -162,6 +166,28 @@ function parsePlayer(p: Obj, index: number, total: number): IncomingPlayer {
   if (p.level !== undefined) out.level = num(p.level);
   for (const k of ["puuid", "tagLine", "soloTier"] as const) {
     if (typeof p[k] === "string" && (p[k] as string).trim()) out[k] = (p[k] as string).trim().slice(0, 100);
+  }
+  if (typeof p.rankObservedAt === "string" && Number.isFinite(Date.parse(p.rankObservedAt))) out.rankObservedAt = new Date(p.rankObservedAt).toISOString();
+  if (p.rankSnapshot && typeof p.rankSnapshot === "object" && !Array.isArray(p.rankSnapshot)) {
+    const rank = p.rankSnapshot as Obj;
+    out.rankSnapshot = {};
+    for (const key of ["soloTier", "previousSoloTier", "flexTier"] as const) {
+      if (typeof rank[key] === "string") out.rankSnapshot[key] = rank[key].trim().slice(0, 40);
+    }
+  }
+  if (p.phaseStats && typeof p.phaseStats === "object" && !Array.isArray(p.phaseStats)) {
+    out.phaseStats = {};
+    for (const minute of ["10", "15"] as const) {
+      const raw = (p.phaseStats as Obj)[minute];
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const frame = raw as Obj;
+      const timestamp = Number(frame.timestamp);
+      const fields = ["gold", "xp", "cs"] as const;
+      if (!Number.isFinite(timestamp) || Math.abs(timestamp - Number(minute) * 60000) > 1500 ||
+          fields.some((key) => typeof frame[key] !== "number" || !Number.isFinite(frame[key]) || Number(frame[key]) < 0)) continue;
+      out.phaseStats[minute] = { timestamp, gold: Number(frame.gold), xp: Number(frame.xp), cs: Number(frame.cs) };
+    }
+    if (Object.keys(out.phaseStats).length) out.phaseStatsVersion = 1;
   }
   if (Array.isArray(p.items)) {
     const items = p.items.slice(0, 7).map((x) => Math.max(0, Math.trunc(Number(x) || 0)));

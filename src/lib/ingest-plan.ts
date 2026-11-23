@@ -96,3 +96,32 @@ export function keepExistingNicknames<T extends NamedPlayer>(
   });
   return { players, renames };
 }
+
+/** 구버전 수집기의 재전송에도 확보한 랭크·구간 지표를 보존한다. */
+export function keepRatingEvidence<T extends {
+  nickname: string; puuid?: string;
+  soloTier?: string; rankObservedAt?: string;
+  rankSnapshot?: import("./types").PlayerStat["rankSnapshot"];
+  phaseStats?: import("./types").PlayerStat["phaseStats"];
+  phaseStatsVersion?: number;
+}>(existing: Array<Record<string, unknown>>, incoming: T[]): T[] {
+  return incoming.map((player) => {
+    const old = existing.find((p) => player.puuid ? p.puuid === player.puuid : p.nickname === player.nickname) ||
+      existing.find((p) => p.nickname === player.nickname);
+    if (!old) return player;
+    const previous = old as unknown as T;
+    const merged = { ...player };
+    if (previous.phaseStats || player.phaseStats) {
+      merged.phaseStats = { ...previous.phaseStats, ...player.phaseStats };
+      merged.phaseStatsVersion = 1;
+    }
+    const oldDate = Date.parse(previous.rankObservedAt || "") || 0;
+    const newDate = Date.parse(player.rankObservedAt || "") || 0;
+    if (oldDate > newDate || (!player.rankSnapshot && !player.soloTier)) {
+      merged.rankSnapshot = previous.rankSnapshot;
+      merged.rankObservedAt = previous.rankObservedAt;
+      merged.soloTier = previous.soloTier;
+    }
+    return merged;
+  });
+}

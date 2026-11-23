@@ -1,5 +1,6 @@
 "use client";
 
+import { estimateRatings, RATING_VERSION } from "@/lib/rating-model";
 import { useState, useMemo } from "react";
 import { BalancePairEditor, type BalancePair } from "./balance-pair-editor";
 import { Card } from "@/components/ui/card";
@@ -54,6 +55,7 @@ function scoreTitle(p: BalancerPlayer): string {
 type Pair = { a: string; b: string; kind: "together" | "apart" };
 
 export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[]; group: Group }) {
+  const [ratingMethod, setRatingMethod] = useState<"legacy" | "context">("legacy");
   const [mode, setMode] = useState<"auto" | "paired">("auto");
   const [balancePairs, setBalancePairs] = useState<BalancePair[]>(Array.from({ length: 5 }, () => ["", ""]));
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -99,11 +101,17 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
     return map;
   }, [group, playerStats]);
 
-  const allPlayers = useMemo(
-    () => getBalancerPlayers(playerStats, tierOverrides, lanePrefs),
-    [playerStats, tierOverrides, lanePrefs]
-  );
+  const estimates = useMemo(() => estimateRatings(group), [group]);
+  const allPlayers = useMemo(() => {
+    const players = getBalancerPlayers(playerStats, tierOverrides, lanePrefs);
+    if (ratingMethod === "legacy") return players;
+    return players.map((p) => {
+      const estimate = estimates.find((r) => r.nickname === p.nickname);
+      return estimate ? { ...p, score: estimate.score, tier: estimate.tier } : p;
+    });
+  }, [playerStats, tierOverrides, lanePrefs, estimates, ratingMethod]);
 
+  const displayTiers = ratingMethod === "legacy" ? tierOverrides : Object.fromEntries(estimates.filter((r) => r.tier).map((r) => [r.nickname, r.tier!]));
   const selectedPlayers = allPlayers.filter((p) => selected.has(p.nickname));
   // 티어를 일부만 입력한 경우에만 안내 (아무도 입력하지 않았으면 전원 내전 전적만으로 공평하게 계산)
   const someTier = selectedPlayers.some((p) => p.parts?.tierKnown);
@@ -167,6 +175,27 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
 
   return (
     <div className="space-y-6">
+      <Card className="space-y-3">
+        <label className="block text-sm font-semibold" htmlFor="rating-method">점수 모델</label>
+        <select id="rating-method" value={ratingMethod} className="w-full rounded-lg border border-hairline bg-surface-1 p-3 text-sm"
+          onChange={(e) => { setRatingMethod(e.target.value as "legacy" | "context"); clearResult(); }}>
+          <option value="legacy">기존 종합 성적</option>
+          <option value="context">상대 전력 모델 · 시험 운영</option>
+        </select>
+        {ratingMethod === "context" && <>
+          <p className="text-xs text-ink-subtle break-keep">{RATING_VERSION} · 현재 솔랭을 기준으로 상대 전력과 승패를 추정합니다. 과거 솔랭과 자유랭은 낮은 신뢰도로 반영합니다. 표본이 적어 시험 운영 중입니다.</p>
+          <details className="text-xs">
+            <summary className="cursor-pointer py-2">선수별 새 점수와 기존 점수 비교</summary>
+            <div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-left">
+              <thead><tr><th className="p-2">선수</th><th>기존</th><th>새 점수</th><th>기준</th><th>지표 보정</th><th>승패 보정</th></tr></thead>
+              <tbody>{getBalancerPlayers(playerStats, tierOverrides, lanePrefs).map((p) => {
+                const r = estimates.find((entry) => entry.nickname === p.nickname);
+                return r && <tr key={p.nickname} className="border-t border-hairline"><td className="p-2">{p.nickname}</td><td>{p.score.toFixed(2)}</td><td>{r.score.toFixed(2)}</td><td>{r.tier || "미확인"} · {r.tierSource}</td><td>{r.performanceAdjustment.toFixed(2)}</td><td>{r.outcomeAdjustment.toFixed(2)}</td></tr>;
+              })}</tbody>
+            </table></div>
+          </details>
+        </>}
+      </Card>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="팀 편성 방식">
         {([["auto", "자동 팀 편성"], ["paired", "밸런스 짝으로 편성"]] as const).map(([value, label]) => (
           <Button key={value} variant={mode === value ? "primary" : "secondary"}
@@ -179,9 +208,9 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
       <Card className="flex items-start gap-3 py-3 px-4">
         <Users size={18} className="text-primary shrink-0 mt-0.5" />
         <p className="text-sm text-ink-muted break-keep">
-          참여할 플레이어를 고르면 내전 전적(솔랭 티어를 입력한 사람은 티어도 함께)으로 매긴 점수로 가능한 편성을 모두 비교해 가장 균형 잡힌 팀을 추천하고,
+          {ratingMethod === "context" ? "시험 모델은 티어 기준값에 같은 포지션 대비 종료 지표와 상대 팀 전력을 고려한 승패를 반영합니다. 아래에서 10명과 밸런스 짝을 선택하세요." : <>참여할 플레이어를 고르면 내전 전적(솔랭 티어를 입력한 사람은 티어도 함께)으로 매긴 점수로 가능한 편성을 모두 비교해 가장 균형 잡힌 팀을 추천하고,
           10명일 때는 선호 포지션까지 고려해 라인을 배정합니다. 선호 포지션은 설정값이 없으면{" "}
-          <span className="text-primary">전적(라인별 판수)</span>에서 자동으로 가져옵니다. 점수에 마우스를 올리면 계산 근거가 보입니다.
+          <span className="text-primary">전적(라인별 판수)</span>에서 자동으로 가져옵니다. 점수에 마우스를 올리면 계산 근거가 보입니다.</>}
         </p>
       </Card>
 
@@ -202,7 +231,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
           {allPlayers.map((player) => {
             const isSelected = selected.has(player.nickname);
-            const memberTier = tierOverrides[player.nickname];
+            const memberTier = displayTiers[player.nickname];
 
             return (
               <button
@@ -241,7 +270,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
                   )}
                 </div>
 
-                <span className="text-xs text-ink-subtle font-mono w-10 text-right shrink-0" title={scoreTitle(player)}>
+                <span className="text-xs text-ink-subtle font-mono w-10 text-right shrink-0" title={ratingMethod === "context" ? (() => { const r = estimates.find((x) => x.nickname === player.nickname); return r ? `${r.tierSource} 기준 ${r.baseline.toFixed(2)} + 지표 ${r.performanceAdjustment.toFixed(2)} + 상대 전력·승패 ${r.outcomeAdjustment.toFixed(2)} · 근거 ${r.evidence}` : ""; })() : scoreTitle(player)}>
                   {player.score.toFixed(1)}
                 </span>
               </button>
@@ -437,8 +466,8 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
             </Card>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <TeamCard team={result.team1} label="블루팀" color="blue" tiers={tierOverrides} />
-            <TeamCard team={result.team2} label="레드팀" color="red" tiers={tierOverrides} />
+            <TeamCard team={result.team1} label="블루팀" color="blue" tiers={displayTiers} experimental={ratingMethod === "context"} />
+            <TeamCard team={result.team2} label="레드팀" color="red" tiers={displayTiers} experimental={ratingMethod === "context"} />
           </div>
         </div>
       )}
@@ -451,11 +480,13 @@ function TeamCard({
   label,
   color,
   tiers,
+  experimental = false,
 }: {
   team: BalancerPlayer[];
   label: string;
   color: "blue" | "red";
   tiers: Record<string, string>;
+  experimental?: boolean;
 }) {
   const total = team.reduce((s, p) => s + p.score, 0);
   const borderColor = color === "blue" ? "border-blue-500/30" : "border-red-500/30";
@@ -493,7 +524,7 @@ function TeamCard({
                   <span>KDA {p.avgKda.toFixed(2)}</span>
                 </>
               )}
-              <span className="font-mono" title={scoreTitle(p)}>{p.score.toFixed(1)}</span>
+              <span className="font-mono" title={experimental ? "상대 전력 시험 모델 · 선수별 비교표에서 계산 근거 확인" : scoreTitle(p)}>{p.score.toFixed(1)}</span>
             </div>
           </div>
         ))}

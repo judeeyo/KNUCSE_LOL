@@ -203,17 +203,84 @@ def solo_tier_from_ranked(stats):
     return f"{tier} {div}" if div else tier
 
 
+def rank_entry(stats, queue):
+    if not isinstance(stats, dict):
+        return {}
+    return (stats.get("queueMap") or {}).get(queue) or next(
+        (q for q in stats.get("queues") or [] if q.get("queueType") == queue), {})
+
+
+def tier_text(entry, tier_field="tier", division_field="division"):
+    tier = TIER_KO.get(str(entry.get(tier_field) or "").upper())
+    if not tier:
+        return None
+    division = DIVISION_NUM.get(str(entry.get(division_field) or "").upper())
+    return f"{tier} {division}" if division and tier not in ("마스터", "그랜드마스터", "챌린저") else tier
+
+
+def attach_phase_stats(lock_info, match_data, game_id, full_game=None):
+    """10/15분 프레임을 확보한 경우에만 저장. 짧은 경기/404/매핑 실패는 미수집 유지."""
+    if lock_info is None or not game_id or not str(game_id).isdigit():
+        return
+    try:
+        full = full_game or get_full_game(lock_info, game_id)
+        timeline = lcu_request(lock_info, f"/lol-match-history/v1/game-timelines/{game_id}")
+        if not isinstance(full, dict) or not timeline:
+            return
+        frames = timeline.get("frames", []) if isinstance(timeline, dict) else timeline
+        if not isinstance(frames, list):
+            return
+        ids = {str((identity.get("player") or {}).get("puuid")): str(identity.get("participantId"))
+               for identity in full.get("participantIdentities", []) if (identity.get("player") or {}).get("puuid")}
+        for player in match_data.get("players", []):
+            participant_id = ids.get(str(player.get("puuid")))
+            if not participant_id:
+                continue
+            snapshots = {}
+            for minute in (10, 15):
+                target = minute * 60000
+                candidates = [f for f in frames if isinstance(f, dict) and isinstance(f.get("timestamp"), (int, float))
+                              and 0 <= target - f["timestamp"] <= 1500]
+                if not candidates:
+                    continue
+                frame = max(candidates, key=lambda f: f["timestamp"])
+                stats = (frame.get("participantFrames") or {}).get(participant_id)
+                if not isinstance(stats, dict):
+                    continue
+                required = ("totalGold", "xp", "minionsKilled", "jungleMinionsKilled")
+                if not all(isinstance(stats.get(k), (int, float)) and stats[k] >= 0 for k in required):
+                    continue
+                snapshots[str(minute)] = {"timestamp": frame["timestamp"], "gold": stats["totalGold"],
+                                          "xp": stats["xp"], "cs": stats["minionsKilled"] + stats["jungleMinionsKilled"]}
+            if snapshots:
+                player["phaseStats"] = snapshots
+                player["phaseStatsVersion"] = 1
+    except Exception as error:
+        log(f"  구간 지표 미수집: {type(error).__name__}")
+
+
 def attach_solo_tiers(lock_info, match_data):
     """참가자별 현재 솔랭 티어를 롤 클라이언트에서 조회해 기록해 둔다 (실패해도 무시).
-    팀 밸런스에는 자동으로 쓰지 않는다 — 나중에 티어가 필요할 때 꺼내 쓰기 위한 기록."""
+    조회 시각을 함께 보관하며 시험 점수 모델의 사전정보로 사용한다."""
     if lock_info is None:
         return
     for p in match_data.get("players", []):
         puuid = p.get("puuid")
-        if not puuid or p.get("soloTier"):
+        if not puuid:
             continue
         try:
-            tier = solo_tier_from_ranked(lcu_request(lock_info, f"/lol-ranked/v1/ranked-stats/{puuid}"))
+            stats = lcu_request(lock_info, f"/lol-ranked/v1/ranked-stats/{puuid}")
+            tier = solo_tier_from_ranked(stats)
+            solo = rank_entry(stats, "RANKED_SOLO_5x5")
+            snapshot = {"soloTier": tier,
+                        "previousSoloTier": tier_text(solo, "previousSeasonEndTier", "previousSeasonEndDivision"),
+                        "flexTier": tier_text(rank_entry(stats, "RANKED_FLEX_SR"))}
+            snapshot = {k: v for k, v in snapshot.items() if v}
+            if isinstance(stats, dict):
+                if not tier:
+                    p.pop("soloTier", None)
+                p["rankSnapshot"] = snapshot
+                p["rankObservedAt"] = datetime.now().astimezone().isoformat()
         except Exception:
             tier = None
         if tier:
@@ -924,6 +991,7 @@ def enrich_from_history(lock_info, match_data, game_id):
         if extra["largestMultiKill"]:
             mp["largestMultiKill"] = extra["largestMultiKill"]
         mp.update({k: v for k, v in extra["loadout"].items() if v})
+    attach_phase_stats(lock_info, match_data, game_id, full)
     return True
 
 
@@ -1396,7 +1464,8 @@ def build_history_match(lock_info, game, label=""):
     if not match_data or len(match_data["players"]) != 10:
         log(f"  {label} ⚠️  데이터 불완전, 건너뜀")
         return None, None
-    attach_solo_tiers(lock_info, match_data)  # 과거 경기여도 "지금" 티어를 기록 (당시 티어는 클라이언트가 주지 않음)
+    attach_solo_tiers(lock_info, match_data)  # 경기일과 별개로 랭크 조회 시각을 기록
+    attach_phase_stats(lock_info, match_data, game_id, full_game)
     return match_data, full_game
 
 

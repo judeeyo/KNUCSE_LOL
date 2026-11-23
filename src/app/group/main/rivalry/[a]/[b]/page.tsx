@@ -12,7 +12,7 @@ import { LabBadge, MomentumDots, SplashBg, TitleChip } from "@/components/group/
 import { getGroup } from "@/lib/store";
 import { formatLastPlayed } from "@/lib/stats";
 import { LANE_LABEL, playerHref, resolveNickname } from "@/lib/profile";
-import { findRivalry, rivalryHref, type RivalGame, type Rivalry, type SideSummary } from "@/lib/rivalry";
+import { findRivalry, METRICS, rivalryHref, TIP_LABEL, type MetricCompare, type MetricValue, type RivalGame, type Rivalry, type SideSummary } from "@/lib/rivalry";
 import { backToList, rememberListPosition, takeListScroll } from "@/lib/list-position";
 import type { Group } from "@/lib/types";
 
@@ -151,26 +151,19 @@ export default function RivalryPage() {
             </div>
           </Card>
 
-          {/* 맞대결 평균 */}
+          {/* 지표별 우세·열세 */}
           <Card className="p-0 overflow-hidden">
-            <div className="flex items-baseline justify-between border-b border-hairline px-4 py-2.5">
-              <h2 className="text-sm font-semibold text-ink">맞대결 평균</h2>
-              <span className="text-[11px] text-ink-tertiary">서로 마주쳤을 때만</span>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 border-b border-hairline px-4 py-2.5">
+              <h2 className="text-sm font-semibold text-ink">지표 비교 <EdgeSummary r={r} /></h2>
+              <span className="text-[11px] text-ink-tertiary">둘이 {LANE_LABEL[r.mainLane]}에서 붙은 {n}판 평균 · 괄호는 평소</span>
             </div>
-            <table className="w-full text-xs tabular-nums">
-              <tbody className="divide-y divide-hairline/50">
-                <CompareRow label="KDA" a={`${r.a.avg.kills}/${r.a.avg.deaths}/${r.a.avg.assists}`} b={`${r.b.avg.kills}/${r.b.avg.deaths}/${r.b.avg.assists}`} />
-                <CompareRow label="데스 (평소)" a={`${r.a.avg.deaths} (${r.a.usualDeaths.toFixed(1)})`} b={`${r.b.avg.deaths} (${r.b.usualDeaths.toFixed(1)})`}
-                  better={r.a.avg.deaths - r.a.usualDeaths < r.b.avg.deaths - r.b.usualDeaths ? "a" : "b"} />
-                <CompareRow label="분당 CS" a={fmt(r.a.avg.csPerMin)} b={fmt(r.b.avg.csPerMin)} better={cmp(r.a.avg.csPerMin, r.b.avg.csPerMin)} />
-                <CompareRow label="분당 골드" a={fmt(r.a.avg.goldPerMin, 0)} b={fmt(r.b.avg.goldPerMin, 0)} better={cmp(r.a.avg.goldPerMin, r.b.avg.goldPerMin)} />
-              </tbody>
-            </table>
-            {r.lanes.length > 1 && (
-              <div className="border-t border-hairline px-4 py-2 text-[11px] text-ink-tertiary">
-                라인별: {r.lanes.map((l) => `${LANE_LABEL[l.lane]} ${l.aWins}:${l.games - l.aWins}`).join(" · ")}
-              </div>
-            )}
+            <ul className="divide-y divide-hairline/50 text-xs tabular-nums">
+              {r.comparison.map((c) => <CompareRow key={c.key} c={c} />)}
+            </ul>
+            <p className="border-t border-hairline px-4 py-2 text-[11px] text-ink-tertiary break-keep">
+              평소 = 각자 {LANE_LABEL[r.mainLane]} 경기 평균(3판 미만이면 전체 경기). 팀 내 딜 비중·분당 시야는 수기 기록을 뺀 판만.
+              {r.lanes.length > 1 && <> 라인별 전적: {r.lanes.map((l) => `${LANE_LABEL[l.lane]} ${l.aWins}:${l.games - l.aWins}`).join(" · ")}</>}
+            </p>
           </Card>
 
           {/* 기억할 경기 + 전체 맞대결 */}
@@ -223,8 +216,6 @@ export default function RivalryPage() {
   );
 }
 
-const fmt = (v: number | null, digits = 1) => (v === null ? "-" : v.toFixed(digits));
-const cmp = (a: number | null, b: number | null): "a" | "b" | undefined => (a === null || b === null || a === b ? undefined : a > b ? "a" : "b");
 
 function recentScore(r: Rivalry, k: number) {
   const recent = r.games.slice(-k);
@@ -255,15 +246,47 @@ function Stat({ label, value, sub, color = "text-ink" }: { label: string; value:
   );
 }
 
-function CompareRow({ label, a, b, better }: { label: string; a: string; b: string; better?: "a" | "b" }) {
+function EdgeSummary({ r }: { r: Rivalry }) {
+  const { a, b } = r.edge;
+  if (a === b) return <span className="ml-1 text-xs font-normal text-ink-subtle">· 팽팽 ({a}:{b})</span>;
+  const lead = a > b ? r.a.nickname : r.b.nickname;
   return (
-    <tr>
-      <td className={`w-[38%] px-4 py-2 text-left ${better === "a" ? "font-semibold text-blue-300" : "text-ink-muted"}`}>{a}</td>
-      <td className="px-1 py-2 text-center text-[11px] text-ink-tertiary">{label}</td>
-      <td className={`w-[38%] px-4 py-2 text-right ${better === "b" ? "font-semibold text-red-300" : "text-ink-muted"}`}>{b}</td>
-    </tr>
+    <span className="ml-1 text-xs font-normal text-ink-subtle">
+      · <span className={a > b ? "text-blue-300" : "text-red-300"}>{lead}</span> {Math.max(a, b)}개 우세 ({a}:{b})
+    </span>
   );
 }
+
+function CompareRow({ c }: { c: MetricCompare }) {
+  const meta = METRICS.find((m) => m.key === c.key)!;
+  const f = (v: number | null) => (v === null ? "-" : `${v.toFixed(meta.digits)}${meta.unit ?? ""}`);
+  const side = (v: MetricValue, s: "a" | "b") => {
+    const win = c.better === s, lose = c.better !== null && c.better !== s;
+    return (
+      <div className={`min-w-0 ${s === "b" ? "text-right" : ""}`}>
+        <div className={`flex items-center gap-1 ${s === "b" ? "flex-row-reverse" : ""}`}>
+          <span className={`text-sm ${win ? `font-bold ${s === "a" ? "text-blue-300" : "text-red-300"}` : "text-ink-muted"}`}>{f(v.value)}</span>
+          {win && <span className="rounded bg-win/15 px-1 text-[10px] font-semibold text-win">우세</span>}
+          {lose && <span className="rounded bg-lose/10 px-1 text-[10px] text-lose/90">열세</span>}
+        </div>
+        <div className="text-[10px] text-ink-tertiary">(평소 {f(v.usual)}){v.n < r_n(c) ? ` · ${v.n}판` : ""}</div>
+      </div>
+    );
+  };
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-4 py-2">
+      {side(c.a, "a")}
+      <div className="text-center">
+        <div className="text-[11px] text-ink-subtle">{c.label}</div>
+        {c.better === null && c.a.value !== null && c.b.value !== null && <div className="text-[10px] text-ink-tertiary">비슷</div>}
+        {c.better !== null && c.diff !== null && <div className="text-[10px] text-ink-tertiary">차이 {c.diff.toFixed(meta.digits)}{meta.unit ?? ""}</div>}
+      </div>
+      {side(c.b, "b")}
+    </li>
+  );
+}
+/** 판수 표시 기준: 두 사람 중 많은 쪽 (적은 쪽만 "n판" 표시) */
+const r_n = (c: MetricCompare) => Math.max(c.a.n, c.b.n);
 
 function Tips({ s, color }: { s: SideSummary; color: "blue" | "red" }) {
   return (
@@ -272,8 +295,9 @@ function Tips({ s, color }: { s: SideSummary; color: "blue" | "red" }) {
       {s.tips.length ? (
         <ul className="space-y-1">
           {s.tips.map((t) => (
-            <li key={t} className="flex items-start gap-1.5 text-xs text-ink-muted break-keep">
-              <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${color === "blue" ? "bg-blue-400" : "bg-red-400"}`} aria-hidden="true" />{t}
+            <li key={t.text} className="flex items-start gap-1.5 text-xs text-ink-muted break-keep">
+              <span className={`mt-px shrink-0 rounded px-1 text-[10px] ${color === "blue" ? "bg-blue-500/15 text-blue-300" : "bg-red-500/15 text-red-300"}`}>{TIP_LABEL[t.kind]}</span>
+              <span>{t.text}</span>
             </li>
           ))}
         </ul>

@@ -59,8 +59,8 @@ describe("라이벌 (같은 라인 맞대결)", () => {
       match(blueTeam("A"), redTeam("B"), true, { champs: ["가렌", "오른"] }),
     ];
     const r = findRivalry(group(ms), "A", "B")!;
-    expect(r.a.tips.some((t) => t.includes("사이온을 잡으면 2전 전패"))).toBe(true);
-    expect(r.b.tips.some((t) => t.includes("사이온으로는 2전 전승"))).toBe(true);
+    expect(r.a.tips.some((t) => t.text.includes("사이온을 잡으면 2전 전패"))).toBe(true);
+    expect(r.b.tips.some((t) => t.text.includes("사이온으로는 2전 전승"))).toBe(true);
   });
 
   it("특집 묶음: 셋의 쌍별 기록과 순위", () => {
@@ -83,6 +83,9 @@ describe("라이벌 (같은 라인 맞대결)", () => {
     expect(josa("뽀스탈게요", "이", "가")).toBe("뽀스탈게요가");
     expect(josa("사이온", "으로", "로")).toBe("사이온으로");
     expect(josa("럼블", "으로", "로")).toBe("럼블로");
-    expect(josa("IMO", "이", "가")).toBe("IMO이(가)");
+    expect(josa("IMO", "이", "가")).toBe("IMO가");
+    expect(josa("seed123", "이", "가")).toBe("seed123이");
+    expect(josa("Eddie", "을", "를")).toBe("Eddie를");
+    expect(josa("~", "이", "가")).toBe("~이(가)");
   });
 });

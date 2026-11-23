@@ -47,9 +47,42 @@ export interface SideSummary {
   wins: number;
   mainChampion: string | null; // 이 맞대결에서 가장 많이 쓴 챔피언 (헤더 그림용)
   champs: ChampUse[]; // 이 맞대결에서 쓴 챔피언 (판수 순)
-  avg: { kills: number; deaths: number; assists: number; csPerMin: number | null; goldPerMin: number | null };
-  usualDeaths: number; // 평소(모든 경기) 평균 데스
-  tips: string[]; // 이 선수가 상대를 만날 때 참고할 점 (기록 기반, 최대 3개)
+  avg: { kills: number; deaths: number; assists: number };
+  metrics: Record<MetricKey, MetricValue>; // 맞대결 평균과 평소 평균
+  tips: Tip[]; // 이 선수가 상대를 만날 때 참고할 점 (기록 기반, 최대 5개)
+}
+
+/** 지표별 비교에 쓰는 항목 */
+export type MetricKey = "kda" | "deaths" | "csPerMin" | "goldPerMin" | "kp" | "damageShare" | "visionPerMin";
+export interface MetricValue {
+  value: number | null; // 맞대결 평균 (자료가 없으면 null)
+  usual: number | null; // 평소 평균: 같은 라인 경기(3판 이상이면), 아니면 모든 경기
+  n: number; // 맞대결 중 이 지표가 있는 판수
+}
+export const METRICS: { key: MetricKey; label: string; higherBetter: boolean; even: number; digits: number; unit?: string }[] = [
+  { key: "kda", label: "KDA", higherBetter: true, even: 0.3, digits: 2 },
+  { key: "deaths", label: "데스", higherBetter: false, even: 0.4, digits: 1 },
+  { key: "csPerMin", label: "분당 CS", higherBetter: true, even: 0.3, digits: 1 },
+  { key: "goldPerMin", label: "분당 골드", higherBetter: true, even: 15, digits: 0 },
+  { key: "kp", label: "킬관여", higherBetter: true, even: 3, digits: 0, unit: "%" },
+  { key: "damageShare", label: "팀 내 딜 비중", higherBetter: true, even: 2, digits: 0, unit: "%" },
+  { key: "visionPerMin", label: "분당 시야", higherBetter: true, even: 0.1, digits: 2 },
+];
+
+export type TipKind = "matchup" | "oppChamp" | "myChamp" | "pick" | "early";
+export const TIP_LABEL: Record<TipKind, string> = {
+  matchup: "맞대결", oppChamp: "상대 챔피언", myChamp: "내 챔피언", pick: "픽", early: "초반",
+};
+export interface Tip { kind: TipKind; text: string }
+
+/** 지표별 우세/열세 */
+export interface MetricCompare {
+  key: MetricKey;
+  label: string;
+  a: MetricValue;
+  b: MetricValue;
+  better: "a" | "b" | null; // null = 비슷하거나 자료 없음
+  diff: number | null; // 좋은 쪽 기준 차이 (절댓값)
 }
 
 export type RivalryTitle =
@@ -71,6 +104,8 @@ export interface Rivalry {
   detailedGames: number;
   titles: RivalryTitle[];
   memorable: { game: RivalGame; reason: string }[];
+  comparison: MetricCompare[];
+  edge: { a: number; b: number }; // 우세 지표 수
   rank: number; // 정렬 점수 (높을수록 위)
 }
 
@@ -85,9 +120,15 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
 
 /** 받침에 맞춘 조사: josa("우효원", "이", "가") → "우효원이". 한글로 안 끝나면 "이(가)" */
 export function josa(word: string, withFinal: string, withoutFinal: string): string {
-  const code = word.charCodeAt(word.length - 1) - 0xac00;
-  if (code < 0 || code > 11171) return `${word}${withFinal}(${withoutFinal})`;
-  const final = code % 28;
+  const last = word.charAt(word.length - 1);
+  const code = last.charCodeAt(0) - 0xac00;
+  let final: number;
+  if (code >= 0 && code <= 11171) final = code % 28;
+  else if (/[A-Za-z0-9]/.test(last)) {
+    // 영문·숫자는 읽는 소리로: L(엘)·R(알)은 ㄹ, M(엠)·N(엔)·0(영)·1(일)·3(삼)·6(육)·7(칠)·8(팔)은 받침 있음
+    const u = last.toUpperCase();
+    final = "LR178".includes(u) ? 8 : "MN036".includes(u) ? 1 : 0;
+  } else return `${word}${withFinal}(${withoutFinal})`;
   // "(으)로"는 ㄹ 받침이면 "로"
   if (withFinal === "으로" && final === 8) return `${word}로`;
   return word + (final ? withFinal : withoutFinal);
@@ -135,54 +176,153 @@ function champUses(games: RivalGame[], side: "a" | "b"): ChampUse[] {
   return [...map.values()].sort((p, q) => q.games - p.games || q.wins - p.wins || p.champion.localeCompare(q.champion, "ko"));
 }
 
-function perMin(games: RivalGame[], side: "a" | "b", field: "cs" | "gold"): number | null {
-  const timed = games.filter((g) => g.minutes > 0);
-  if (!timed.length) return null;
-  return avg(timed.map((g) => g[side][field] / g.minutes));
+/** 한 경기 한 선수의 비교 지표 (없는 값은 null) */
+function gameMetrics(match: Match, p: PlayerStat): Record<MetricKey, number | null> {
+  const minutes = minutesOf(match);
+  const team = match.players.filter((x) => x.team === p.team);
+  const teamKills = team.reduce((sum, x) => sum + x.kills, 0);
+  const detailed = match.source !== "legacy-import";
+  const teamDamage = team.reduce((sum, x) => sum + (x.damageDealt || 0), 0);
+  return {
+    kda: (p.kills + p.assists) / Math.max(1, p.deaths),
+    deaths: p.deaths,
+    csPerMin: minutes > 0 ? p.cs / minutes : null,
+    goldPerMin: minutes > 0 ? p.gold / minutes : null,
+    kp: teamKills > 0 ? ((p.kills + p.assists) / teamKills) * 100 : null,
+    damageShare: detailed && !p.noDamage && teamDamage > 0 ? ((p.damageDealt || 0) / teamDamage) * 100 : null,
+    visionPerMin: detailed && !p.noVision && minutes > 0 ? p.visionScore / minutes : null,
+  };
 }
 
-/** 기록에서 뽑은 참고 문장. 기준을 넘는 것만, 영향 큰 순서로 최대 3개 */
-function buildTips(games: RivalGame[], me: "a" | "b", usualDeaths: number): string[] {
-  const opp = me === "a" ? "b" : "a";
-  const oppName = games[0][opp].nickname;
-  const tips: { weight: number; text: string }[] = [];
-  if (games.length < RIVALRY_MIN_GAMES) return [];
+type MetricRows = Record<MetricKey, number | null>[];
+const KEYS = METRICS.map((m) => m.key);
+function meanOf(rows: MetricRows, key: MetricKey): { value: number | null; n: number } {
+  const xs = rows.map((r) => r[key]).filter((v): v is number => v !== null);
+  return { value: xs.length ? avg(xs) : null, n: xs.length };
+}
 
-  // 1. 데스 (평소 대비)
-  const deaths = avg(games.map((g) => g[me].deaths));
-  const dd = deaths - usualDeaths;
-  if (dd >= 1) tips.push({ weight: dd, text: `${josa(oppName, "을", "를")} 만나면 데스가 평소보다 ${dd.toFixed(1)} 많음 (평균 ${deaths.toFixed(1)}) → 무리한 교전 주의` });
-  else if (dd <= -1) tips.push({ weight: -dd * 0.6, text: `${oppName} 상대로는 데스가 평소보다 ${(-dd).toFixed(1)} 적음 → 지금처럼 안정적으로` });
-
-  // 2. 분당 CS·골드 (맞상대와 직접 비교)
-  const timed = games.filter((g) => g.minutes > 0);
-  if (timed.length >= RIVALRY_MIN_GAMES) {
-    const csDiff = avg(timed.map((g) => (g[me].cs - g[opp].cs) / g.minutes));
-    const goldDiff = avg(timed.map((g) => (g[me].gold - g[opp].gold) / g.minutes));
-    if (csDiff <= -0.7) tips.push({ weight: -csDiff, text: `분당 CS ${(-csDiff).toFixed(1)}개 밀림 → 라인 손해 줄이고 합류 위주로` });
-    else if (csDiff >= 0.7) tips.push({ weight: csDiff * 0.8, text: `분당 CS ${csDiff.toFixed(1)}개 앞섬 → 라인 우위를 살릴 것` });
-    else if (Math.abs(goldDiff) >= 40) {
-      tips.push({ weight: Math.abs(goldDiff) / 60, text: goldDiff < 0
-        ? `분당 골드 ${Math.round(-goldDiff)} 뒤짐 → 킬 내주지 않기`
-        : `분당 골드 ${Math.round(goldDiff)} 앞섬` });
+/** 선수별 평소 지표: 같은 라인 경기가 3판 이상이면 그 라인, 아니면 전체 */
+function buildUsual(matches: Match[]) {
+  const byLane = new Map<string, MetricRows>();
+  const all = new Map<string, MetricRows>();
+  for (const m of matches) for (const p of m.players) {
+    const row = gameMetrics(m, p);
+    (all.get(p.nickname) || all.set(p.nickname, []).get(p.nickname)!).push(row);
+    if (p.lane) {
+      const k = `${p.nickname}|${p.lane}`;
+      (byLane.get(k) || byLane.set(k, []).get(k)!).push(row);
     }
   }
+  return (nickname: string, lane: Lane): MetricRows => {
+    const laneRows = byLane.get(`${nickname}|${lane}`) || [];
+    return laneRows.length >= 3 ? laneRows : all.get(nickname) || [];
+  };
+}
 
-  // 3. 상대 챔피언 중 유독 약한 것 / 내 챔피언 중 잘 통한 것
-  const oppChamps = champUses(games, opp);
-  const bad = oppChamps.find((c) => c.games >= 2 && c.wins === c.games); // 상대가 그 챔피언으로 전승 = 내가 전패
-  if (bad) tips.push({ weight: 1.2 + bad.games * 0.2, text: `${josa(oppName, "이", "가")} ${josa(bad.champion, "을", "를")} 잡으면 ${bad.games}전 전패 → ${bad.games >= 3 ? "밴 고려" : "조심"}` });
-  const good = champUses(games, me).find((c) => c.games >= 2 && c.wins === c.games);
-  if (good) tips.push({ weight: 1 + good.games * 0.2, text: `${josa(good.champion, "으로", "로")}는 ${good.games}전 전승` });
+const fmtSigned = (v: number, digits = 1) => `${v > 0 ? "+" : ""}${v.toFixed(digits)}`;
 
-  // 4. 퍼스트 블러드 (기록된 경기만)
-  const fbGames = games.filter((g) => g[me].firstBlood !== undefined && g.detailed);
-  if (fbGames.length >= RIVALRY_MIN_GAMES) {
-    const oppFb = fbGames.filter((g) => g[opp].firstBlood).length;
-    if (oppFb >= 2 && oppFb / fbGames.length >= 0.4) tips.push({ weight: 0.9, text: `${josa(oppName, "이", "가")} 퍼스트 블러드 ${fbGames.length}판 중 ${oppFb}번 → 초반 정글 동선 조심` });
+/**
+ * 기록에서 뽑은 참고 문장. 기준을 넘는 것만, 영향이 큰 순으로 최대 5개 (한 종류 최대 2개).
+ * - 맞대결: 이 상대를 만날 때 평소와 달라지는 지표
+ * - 상대 챔피언: 상대가 그 챔피언일 때 내 지표가 평소와 달라지는 것 (2판 이상)
+ * - 내 챔피언: 내가 그 챔피언일 때 평소와 달라지는 것 → 무엇에 집중할지 (2판 이상)
+ * - 픽: 상대 챔피언/내 챔피언 전승·전패
+ * - 초반: 퍼스트 블러드
+ */
+function buildTips(games: RivalGame[], me: "a" | "b", usualRows: MetricRows): Tip[] {
+  const opp = me === "a" ? "b" : "a";
+  const oppName = games[0][opp].nickname;
+  const tips: (Tip & { weight: number })[] = [];
+  if (games.length < RIVALRY_MIN_GAMES) return [];
+  const usual = Object.fromEntries(KEYS.map((k) => [k, meanOf(usualRows, k).value])) as Record<MetricKey, number | null>;
+  const rowsOf = (gs: RivalGame[]) => gs.map((g) => gameMetrics(g.match, g[me]));
+  const delta = (rows: MetricRows, key: MetricKey) => {
+    const m = meanOf(rows, key);
+    const u = usual[key];
+    return m.value === null || u === null || m.n < 2 ? null : m.value - u;
+  };
+  const push = (kind: TipKind, weight: number, text: string) => tips.push({ kind, weight, text });
+
+  // 1. 맞대결 전체 vs 평소
+  const all = rowsOf(games);
+  const dDeaths = delta(all, "deaths");
+  if (dDeaths !== null && dDeaths >= 1) push("matchup", dDeaths, `${josa(oppName, "을", "를")} 만나면 데스 평소보다 ${fmtSigned(dDeaths)} → 무리한 교전 주의`);
+  else if (dDeaths !== null && dDeaths <= -1) push("matchup", -dDeaths * 0.6, `${oppName} 상대로는 데스 평소보다 ${fmtSigned(dDeaths)} → 지금처럼 안정적으로`);
+  const dCs = delta(all, "csPerMin");
+  if (dCs !== null && dCs <= -0.6) push("matchup", -dCs * 1.2, `${josa(oppName, "을", "를")} 만나면 분당 CS 평소보다 ${fmtSigned(dCs)} → 라인 손해 줄이고 웨이브 관리`);
+  const dKp = delta(all, "kp");
+  if (dKp !== null && Math.abs(dKp) >= 8) push("matchup", Math.abs(dKp) / 8, dKp > 0
+    ? `${oppName} 상대로는 킬관여 평소보다 ${fmtSigned(dKp, 0)}%p → 합류 위주 운영이 잘 통함`
+    : `${oppName} 상대로는 킬관여 평소보다 ${fmtSigned(dKp, 0)}%p → 라인에 묶이지 말고 합류 타이밍 챙기기`);
+  const dDmg = delta(all, "damageShare");
+  if (dDmg !== null && dDmg <= -4) push("matchup", -dDmg / 4, `${oppName} 상대로는 팀 내 딜 비중 평소보다 ${fmtSigned(dDmg, 0)}%p → 한타에서 딜 넣을 자리 찾기`);
+
+  // 2. 상대 챔피언별 (그 챔피언을 상대로 2판 이상)
+  for (const c of champUses(games, opp).filter((x) => x.games >= 2)) {
+    const rows = rowsOf(games.filter((g) => g[opp].champion === c.champion));
+    const vs = `상대가 ${c.champion}일 때`;
+    const cs = delta(rows, "csPerMin");
+    const de = delta(rows, "deaths");
+    if (cs !== null && cs <= -0.7) push("oppChamp", -cs * 1.3, `${vs} 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 무리한 파밍 경쟁보다 웨이브 관리`);
+    if (de !== null && de >= 1.5) push("oppChamp", de * 0.9, `${vs} 데스 평소보다 ${fmtSigned(de)} (${c.games}판) → 초반 교전 피하고 사거리·쿨타임 확인`);
+    if (cs !== null && cs >= 0.7 && (de === null || de < 1)) push("oppChamp", cs * 0.8, `${vs}는 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 라인 우위 살리기 좋음`);
   }
 
-  return tips.sort((p, q) => q.weight - p.weight).slice(0, 3).map((t) => t.text);
+  // 3. 내 챔피언별 (이 맞대결에서 2판 이상)
+  for (const c of champUses(games, me).filter((x) => x.games >= 2)) {
+    const rows = rowsOf(games.filter((g) => g[me].champion === c.champion));
+    const with_ = `${josa(c.champion, "으로", "로")} 할 때`;
+    const de = delta(rows, "deaths");
+    const dmg = delta(rows, "damageShare");
+    const cs = delta(rows, "csPerMin");
+    const kda = delta(rows, "kda");
+    const kp = delta(rows, "kp");
+    if (de !== null && de >= 1.5) push("myChamp", de * 0.9, `${with_} 데스 평소보다 ${fmtSigned(de)} (${c.games}판) → 무리한 진입 자제, 합류 타이밍에 집중`);
+    if (dmg !== null && dmg <= -4) push("myChamp", -dmg / 4, `${with_} 팀 내 딜 비중 평소보다 ${fmtSigned(dmg, 0)}%p → 딜보다 탱킹·이니시·스플릿에 집중`);
+    if (cs !== null && cs <= -0.7) push("myChamp", -cs, `${with_} 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 라인전 파밍에 더 신경`);
+    if (kp !== null && kp >= 10) push("myChamp", kp / 10, `${with_} 킬관여 평소보다 ${fmtSigned(kp, 0)}%p → 텔·합류로 팀을 돕는 플레이가 맞음`);
+    if (kda !== null && kda >= 1) push("myChamp", kda * 0.7, `${with_} KDA 평소보다 ${fmtSigned(kda)} (${c.games}판 ${c.wins}승) → ${c.wins * 2 > c.games ? "믿을 만한 픽" : "성적은 좋지만 승리로 잘 안 이어짐"}`);
+  }
+
+  // 4. 픽 (전승·전패)
+  const bad = champUses(games, opp).find((c) => c.games >= 2 && c.wins === c.games);
+  if (bad) push("pick", 0.9 + bad.games * 0.2, `${josa(oppName, "이", "가")} ${josa(bad.champion, "을", "를")} 잡으면 ${bad.games}전 전패 → ${bad.games >= 3 ? "밴 고려" : "조심"}`);
+  const good = champUses(games, me).find((c) => c.games >= 2 && c.wins === c.games);
+  if (good && !tips.some((t) => t.kind === "myChamp" && t.text.startsWith(`${josa(good.champion, "으로", "로")} 할 때 KDA`))) push("pick", 0.8 + good.games * 0.2, `${josa(good.champion, "으로", "로")}는 ${good.games}전 전승`);
+
+  // 5. 초반 (퍼스트 블러드, 수기 기록 제외)
+  const fbGames = games.filter((g) => g.detailed && g[me].firstBlood !== undefined);
+  if (fbGames.length >= RIVALRY_MIN_GAMES) {
+    const oppFb = fbGames.filter((g) => g[opp].firstBlood).length;
+    const myFb = fbGames.filter((g) => g[me].firstBlood).length;
+    if (oppFb >= 2 && oppFb / fbGames.length >= 0.4) push("early", 0.9, `${josa(oppName, "이", "가")} 퍼스트 블러드 ${fbGames.length}판 중 ${oppFb}번 → 초반 정글 동선 조심`);
+    else if (myFb >= 2 && myFb / fbGames.length >= 0.4) push("early", 0.7, `퍼스트 블러드 ${fbGames.length}판 중 ${myFb}번 → 초반 주도권을 잘 잡음`);
+  }
+
+  // 영향 큰 순, 한 종류 최대 2개, 전체 5개
+  const out: Tip[] = [];
+  const perKind = new Map<TipKind, number>();
+  for (const t of tips.sort((p, q) => q.weight - p.weight)) {
+    if ((perKind.get(t.kind) || 0) >= 2) continue;
+    perKind.set(t.kind, (perKind.get(t.kind) || 0) + 1);
+    out.push({ kind: t.kind, text: t.text });
+    if (out.length === 5) break;
+  }
+  return out;
+}
+
+function compareMetrics(a: SideSummary, b: SideSummary): MetricCompare[] {
+  return METRICS.map((m) => {
+    const va = a.metrics[m.key], vb = b.metrics[m.key];
+    let better: "a" | "b" | null = null;
+    let diff: number | null = null;
+    if (va.value !== null && vb.value !== null && Math.min(va.n, vb.n) >= 2) {
+      const d = va.value - vb.value;
+      diff = Math.abs(d);
+      if (diff >= m.even) better = (d > 0) === m.higherBetter ? "a" : "b";
+    }
+    return { key: m.key, label: m.label, a: va, b: vb, better, diff };
+  });
 }
 
 function pickMemorable(games: RivalGame[]): { game: RivalGame; reason: string }[] {
@@ -199,7 +339,7 @@ function pickMemorable(games: RivalGame[]): { game: RivalGame; reason: string }[
   return out.slice(0, 4).sort((p, q) => byDate(q.game.match, p.game.match));
 }
 
-function buildTitles(r: Omit<Rivalry, "titles" | "memorable" | "rank">): RivalryTitle[] {
+function buildTitles(r: Omit<Rivalry, "titles" | "memorable" | "rank" | "comparison" | "edge">): RivalryTitle[] {
   const n = r.games.length;
   const titles: RivalryTitle[] = [];
   const aRate = r.a.wins / n;
@@ -221,12 +361,7 @@ function buildTitles(r: Omit<Rivalry, "titles" | "memorable" | "rank">): Rivalry
 
 /** 쌍별로 집계한 라이벌 목록 (맞대결 RIVALRY_MIN_GAMES 판 이상, 정렬 점수 순) */
 export function buildRivalries(group: Group, now: number = Date.now(), minGames = RIVALRY_MIN_GAMES): Rivalry[] {
-  const usual = new Map<string, number[]>();
-  for (const m of group.matches) for (const p of m.players) {
-    const l = usual.get(p.nickname) || [];
-    l.push(p.deaths);
-    usual.set(p.nickname, l);
-  }
+  const usualOf = buildUsual(group.matches);
   const out: Rivalry[] = [];
   for (const [key, games] of collect(group.matches)) {
     if (games.length < minGames) continue;
@@ -253,7 +388,12 @@ export function buildRivalries(group: Group, now: number = Date.now(), minGames 
     const side = (s: "a" | "b"): SideSummary => {
       const nickname = games[0][s].nickname;
       const champs = champUses(games, s);
-      const usualDeaths = avg(usual.get(nickname) || []);
+      const usualRows = usualOf(nickname, lanes[0].lane);
+      const mine = games.map((g) => gameMetrics(g.match, g[s]));
+      const metrics = Object.fromEntries(KEYS.map((k) => {
+        const m = meanOf(mine, k);
+        return [k, { value: m.value, n: m.n, usual: meanOf(usualRows, k).value }];
+      })) as Record<MetricKey, MetricValue>;
       return {
         nickname,
         wins: s === "a" ? aWins : n - aWins,
@@ -263,18 +403,19 @@ export function buildRivalries(group: Group, now: number = Date.now(), minGames 
           kills: round1(avg(games.map((g) => g[s].kills))),
           deaths: round1(avg(games.map((g) => g[s].deaths))),
           assists: round1(avg(games.map((g) => g[s].assists))),
-          csPerMin: perMin(games, s, "cs"),
-          goldPerMin: perMin(games, s, "gold"),
         },
-        usualDeaths,
-        tips: buildTips(games, s, usualDeaths),
+        metrics,
+        tips: buildTips(games, s, usualRows),
       };
     };
 
+    const sideA = side("a");
+    const sideB = side("b");
+    const comparison = compareMetrics(sideA, sideB);
     const base = {
       key,
-      a: side("a"),
-      b: side("b"),
+      a: sideA,
+      b: sideB,
       games,
       lanes,
       mainLane: lanes[0].lane,
@@ -288,7 +429,8 @@ export function buildRivalries(group: Group, now: number = Date.now(), minGames 
     const p = (aWins + 2) / (n + 4);
     const closeness = 1 - Math.abs(p - 0.5) * 2;
     const rank = (recency + n * 0.15) * (0.5 + closeness);
-    out.push({ ...base, titles: buildTitles(base), memorable: pickMemorable(games), rank });
+    const edge = { a: comparison.filter((c) => c.better === "a").length, b: comparison.filter((c) => c.better === "b").length };
+    out.push({ ...base, titles: buildTitles(base), memorable: pickMemorable(games), comparison, edge, rank });
   }
   return out.sort((p, q) => q.rank - p.rank || q.games.length - p.games.length);
 }

@@ -22,7 +22,7 @@ const VIEWPORTS = [
   { name: "tablet-768", width: 768, height: 1024 },
   { name: "desktop-1280", width: 1280, height: 800 },
 ];
-const TABS = ["선수별 성적", "챔피언 승률", "포지션별 순위", "진영별 통계", "듀오 상성", "매치 기록", "선수 정보", "팀 밸런스"];
+const TABS = ["선수별 성적", "라이벌", "듀오 상성", "매치 기록", "선수 정보", "팀 밸런스"];
 
 /** 브라우저 안에서 실행되는 레이아웃 검사 */
 function audit() {
@@ -145,11 +145,7 @@ for (const vp of VIEWPORTS) {
       await check("모달 - 선수 상세");
       await page.keyboard.press("Escape");
     }
-    if (tab === "챔피언 승률") {
-      await page.locator("tbody tr").first().click();
-      await check("모달 - 챔피언 상세");
-      await page.keyboard.press("Escape");
-    }
+
   }
 
   await page.getByRole("button", { name: "수집기 사용법" }).click();

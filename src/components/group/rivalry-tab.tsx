@@ -77,36 +77,28 @@ export function RivalryTab({ group }: { group: Group }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start gap-2 rounded-lg border border-ace/30 bg-ace/5 px-3 py-2 text-xs text-ink-muted break-keep">
-        <FlaskConical size={14} className="mt-0.5 shrink-0 text-ace" />
-        <span>
-          <b className="text-ace">실험실</b> · 같은 라인에서 맞붙은 기록만 모았습니다. 승패는 그 판 팀 결과라 한 사람 실력만의 결과는 아닙니다.
-          칭호·팁은 기록이 기준을 넘을 때만 붙습니다.
-        </span>
-      </div>
-
       {featured.map((f) => (
-        <Card key={f.title} className="space-y-3 p-0 overflow-hidden">
+        <Card key={f.title} className="space-y-4 overflow-hidden border-mvp/35 bg-gradient-to-br from-mvp/10 via-surface-1 to-surface-1 p-0 pb-3">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-4 pt-4">
-            <h2 className="flex items-center gap-1.5 text-base font-bold text-ink">
+            <h2 className="flex items-center gap-1.5 text-2xl font-bold text-ink">
               <Swords size={16} className="text-mvp" /> {f.title}
               <span className="text-xs font-normal text-ink-subtle">· {LANE_LABEL[f.lane]}</span>
             </h2>
-            <span className="text-[11px] text-ink-tertiary">{f.subtitle}</span>
+            <span className="text-[11px] text-ink-tertiary">탑 맞대결 {f.pairs.reduce((sum, r) => sum + r.games.length, 0)}경기</span>
           </div>
 
           {/* 세 사람 순위 (일러스트 카드) */}
-          <div className="grid grid-cols-3 gap-1.5 px-4">
+          <div className="grid gap-2 px-4 sm:grid-cols-3">
             {f.standings.map((s, i) => {
               const url = s.mainChampion ? getChampionSplashUrl(s.mainChampion) : null;
               return (
                 <Link key={s.nickname} href={`/group/main/player/${encodeURIComponent(s.nickname)}`} onClick={open}
-                  className="relative min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface-2 px-2 pb-2 pt-12 hover:border-hairline-strong transition-fast">
+                  className="relative min-w-0 overflow-hidden rounded-lg border border-hairline bg-surface-2 px-3 pb-3 pt-5 sm:pt-16 hover:border-hairline-strong transition-fast">
                   {url && <div aria-hidden="true" className="absolute inset-0 bg-cover bg-top opacity-50" style={{ backgroundImage: `url("${url}")` }} />}
                   <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-surface-1 via-surface-1/70 to-transparent" />
                   <div className="relative">
                     <div className="flex items-center gap-1 text-[11px] text-ink-subtle">
-                      {i === 0 && <Crown size={11} className="text-mvp" />}{i + 1}위{s.mainChampion && <span className="truncate">· {s.mainChampion}</span>}
+                      {i === 0 && <Crown size={11} className="text-mvp" />}{s.games ? (1 + f.standings.filter((p) => p.games && p.winRate > s.winRate).length) + "위" : "전적 없음"}{s.mainChampion && <span className="truncate">· {s.mainChampion}</span>}
                     </div>
                     <div className="truncate text-sm font-bold text-ink">{s.nickname}</div>
                     <div className="text-[11px] text-ink-subtle tabular-nums">
@@ -118,10 +110,22 @@ export function RivalryTab({ group }: { group: Group }) {
             })}
           </div>
 
-          {/* 쌍별 */}
+          <h3 className="px-4 text-sm font-semibold">상대별 전적</h3>
           <ul className="divide-y divide-hairline/60 border-t border-hairline">
             {f.pairs.map((r) => <RivalryRow key={r.key} r={r} onOpen={open} />)}
           </ul>
+          <h3 className="border-t border-hairline px-4 pt-3 text-sm font-semibold">최근 전투록</h3>
+          <ol className="divide-y divide-hairline/50 px-4">
+            {f.pairs.flatMap((r) => r.games).sort((a, b) => Date.parse(b.match.createdAt) - Date.parse(a.match.createdAt)).slice(0, 3).map((g) => {
+              const winner = g.aWin ? g.a : g.b;
+              const opponent = g.aWin ? g.b : g.a;
+              return <li key={g.match.id}><Link href={`/group/main/match/${g.match.id}`} onClick={open}
+                className="block rounded py-2 text-sm hover:bg-surface-2">
+                <span className="block text-xs text-ink-subtle">{new Date(g.match.createdAt).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })} · {g.match.gameDuration}</span>
+                <strong>{winner.nickname}</strong> 팀 승리 · {winner.champion} vs {opponent.nickname}의 {opponent.champion}
+              </Link></li>;
+            })}
+          </ol>
         </Card>
       ))}
 

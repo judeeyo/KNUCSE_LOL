@@ -6,12 +6,9 @@ import { getGroup, deleteMatch as deleteMatchApi } from "@/lib/store";
 import { buildPlayerStats, computeAwards } from "@/lib/stats";
 import { Button } from "@/components/ui/button";
 import { PlayerStatsTab } from "@/components/group/player-stats-tab";
-import { ChampionStatsTab } from "@/components/group/champion-stats-tab";
-import { LaneRankingTab } from "@/components/group/lane-ranking-tab";
 import { MatchHistoryTab } from "@/components/group/match-history-tab";
 import { BalanceTab } from "@/components/group/balance-tab";
 import { PlayerInfoTab } from "@/components/group/player-info-tab";
-import { TeamSideTab } from "@/components/group/team-side-tab";
 import { DuoTab } from "@/components/group/duo-tab";
 import { RivalryTab, LabBadge } from "@/components/group/rivalry-tab";
 import { Modal } from "@/components/ui/modal";
@@ -20,13 +17,10 @@ import { AdminCancelledError } from "@/lib/admin-client";
 import { rememberListPosition, takeListScroll } from "@/lib/list-position";
 import {
   Users,
-  Swords,
   Gamepad2,
   Scale,
   UserCog,
-  GitCompareArrows,
   Handshake,
-  ListOrdered,
   Download,
   Plus,
   HelpCircle,
@@ -35,13 +29,10 @@ import {
 } from "lucide-react";
 import type { Group } from "@/lib/types";
 
-type Tab = "players" | "champions" | "lanes" | "sides" | "duos" | "rivalry" | "matches" | "info" | "balance";
+type Tab = "players" | "duos" | "rivalry" | "matches" | "info" | "balance";
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode; lab?: boolean }[] = [
   { key: "players", label: "선수별 성적", icon: <Users size={16} /> },
-  { key: "champions", label: "챔피언 승률", icon: <Swords size={16} /> },
-  { key: "lanes", label: "포지션별 순위", icon: <ListOrdered size={16} /> },
-  { key: "sides", label: "진영별 통계", icon: <GitCompareArrows size={16} /> },
   { key: "duos", label: "듀오 상성", icon: <Handshake size={16} /> },
   { key: "rivalry", label: "라이벌", icon: <RivalIcon size={16} />, lab: true },
   { key: "matches", label: "매치 기록", icon: <Gamepad2 size={16} /> },
@@ -219,9 +210,6 @@ export default function MainGroupPage() {
 
       {/* Tab Content */}
       {tab === "players" && <PlayerStatsTab playerStats={playerStats} awards={awards} matchCount={group.matches.length} />}
-      {tab === "champions" && <ChampionStatsTab group={group} />}
-      {tab === "lanes" && <LaneRankingTab group={group} />}
-      {tab === "sides" && <TeamSideTab group={group} />}
       {tab === "duos" && <DuoTab group={group} />}
       {tab === "rivalry" && <RivalryTab group={group} />}
       {tab === "matches" && (

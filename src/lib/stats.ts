@@ -1047,7 +1047,7 @@ export function balanceOptions(
   }
 
   candidates.sort((a, b) => constraints.scoreFirst
-    ? a.diff - b.diff || b.laneFit - a.laneFit
+    ? Math.round(a.diff * 100) - Math.round(b.diff * 100) || b.laneFit - a.laneFit
     : a.objective - b.objective);
   const laneOrder = (p: BalancerPlayer) => (p.assignedLane ? BALANCE_LANES.indexOf(p.assignedLane) : 0);
   const byLane = (team: BalancerPlayer[]) => (withLanes ? [...team].sort((a, b) => laneOrder(a) - laneOrder(b)) : team);

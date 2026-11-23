@@ -35,6 +35,9 @@ describe("밸런스 짝 편성", () => {
     const results = balancePairedTeams(players, pairs);
     expect(results[0].diff).toBe(Math.min(...differences));
     expect(results.map((r) => r.diff)).toEqual(results.map((r) => r.diff).sort((a, b) => a - b));
+    for (let i = 1; i < results.length; i++) {
+      if (results[i].diff === results[i - 1].diff) expect(results[i].laneFit).toBeLessThanOrEqual(results[i - 1].laneFit);
+    }
   });
   it("미완성, 중복, 참가자 외 선수, 10명 미만은 편성하지 않는다", () => {
     expect(balancePairedTeams(players, pairs.slice(0, 4))).toEqual([]);

@@ -122,3 +122,9 @@ export function getChampionIconUrl(championName: string): string | null {
 export function getChampionKey(championName: string): string | null {
   return KO_TO_KEY[championName] || (/^[A-Za-z]/.test(championName) ? championName.replace(/\s/g, "") : null);
 }
+
+/** 챔피언 대표 일러스트(가운데 정렬 스플래시). 버전 없는 주소라 패치와 상관없이 쓸 수 있다 */
+export function getChampionSplashUrl(championName: string): string | null {
+  const key = getChampionKey(championName);
+  return key ? `https://ddragon.leagueoflegends.com/cdn/img/champion/centered/${key}_0.jpg` : null;
+}

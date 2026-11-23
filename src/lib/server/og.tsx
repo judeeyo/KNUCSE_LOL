@@ -1,7 +1,7 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getChampionIconUrl } from "@/lib/champions";
+import { getChampionIconUrl, getChampionSplashUrl } from "@/lib/champions";
 
 // 미리보기 이미지용 공통 도구: 한글 폰트(Pretendard) 로드, 챔피언 아이콘을 미리 받아 data URL 로.
 let fontCache: Promise<Buffer> | null = null;
@@ -37,6 +37,20 @@ export async function championIconData(name: string): Promise<string | null> {
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
     return `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+/** 챔피언 일러스트(jpg)를 data URL 로. 못 받으면 null */
+export async function championSplashData(name: string | null): Promise<string | null> {
+  const url = name ? getChampionSplashUrl(name) : null;
+  if (!url) return null;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return `data:image/jpeg;base64,${buf.toString("base64")}`;
   } catch {
     return null;
   }

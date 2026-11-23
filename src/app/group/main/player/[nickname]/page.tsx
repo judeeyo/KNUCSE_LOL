@@ -22,6 +22,7 @@ import {
   type RelationRecord,
 } from "@/lib/profile";
 import { backToList, rememberListPosition, takeListScroll } from "@/lib/list-position";
+import { rivalryHref } from "@/lib/rivalry";
 import type { Group } from "@/lib/types";
 
 const CACHE_KEY = "naejeon-group-cache-v1"; // 메인 화면과 같은 캐시 (같은 세션이면 즉시 표시)
@@ -189,10 +190,13 @@ export default function PlayerPage() {
           />
           {profile.laneOpponents.length > 0 && (
             <Card className="p-0 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-hairline text-sm font-semibold text-ink">맞라인 상대 전적</div>
+              <div className="px-4 py-2.5 border-b border-hairline flex flex-wrap items-baseline justify-between gap-x-2">
+                <span className="text-sm font-semibold text-ink">맞라인 상대 전적</span>
+                <span className="text-[11px] text-ink-tertiary">누르면 라이벌전</span>
+              </div>
               <ul className="divide-y divide-hairline/50">
                 {profile.laneOpponents.slice(0, 6).map((r) => (
-                  <RelationRow key={r.nickname} r={r} onOpen={() => rememberListPosition(positionKey)} />
+                  <RelationRow key={r.nickname} r={r} href={rivalryHref(nickname, r.nickname)} onOpen={() => rememberListPosition(positionKey)} />
                 ))}
               </ul>
             </Card>
@@ -276,11 +280,11 @@ function GameRow({ g, now, onOpen }: { g: ProfileGame; now: number; onOpen: () =
   );
 }
 
-function RelationRow({ r, onOpen }: { r: RelationRecord; onOpen: () => void }) {
+function RelationRow({ r, onOpen, href }: { r: RelationRecord; onOpen: () => void; href?: string }) {
   return (
     <li>
-      <Link href={playerHref(r.nickname)} onClick={onOpen} className="flex items-center justify-between gap-3 px-4 py-2 hover:bg-surface-2/60 transition-fast">
-        <span className="text-sm text-ink truncate">{r.nickname}</span>
+      <Link href={href ?? playerHref(r.nickname)} onClick={onOpen} className="flex items-center justify-between gap-3 px-4 py-2 hover:bg-surface-2/60 transition-fast">
+        <span className="text-sm text-ink truncate">{href && <span className="mr-1 text-mvp" aria-hidden="true">⚔</span>}{r.nickname}</span>
         <span className="text-xs whitespace-nowrap shrink-0">
           <span className="text-ink-tertiary">{r.games}판 {r.wins}승 </span>
           <span className={`font-semibold ${r.winRate >= 60 ? "text-win" : r.winRate <= 40 ? "text-lose" : "text-ink-subtle"}`}>{r.winRate.toFixed(0)}%</span>

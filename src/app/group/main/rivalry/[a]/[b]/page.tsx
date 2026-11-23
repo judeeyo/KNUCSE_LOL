@@ -120,7 +120,7 @@ export default function RivalryPage() {
               <div className="flex items-baseline gap-1.5 text-3xl font-black tabular-nums sm:text-4xl">
                 <span className="text-blue-300">{r.a.wins}</span><span className="text-sm text-ink-tertiary">VS</span><span className="text-red-300">{r.b.wins}</span>
               </div>
-              <div className="text-[11px] text-ink-subtle">{LANE_LABEL[r.mainLane]} 맞대결 {n}판</div>
+              <div className="text-[11px] text-ink-subtle">전체 맞대결 {n}판</div>
             </div>
             <SideHead s={r.b} color="red" align="right" />
           </div>
@@ -155,7 +155,7 @@ export default function RivalryPage() {
           <Card className="p-0 overflow-hidden">
             <div className="flex flex-wrap items-baseline justify-between gap-x-2 border-b border-hairline px-4 py-2.5">
               <h2 className="text-sm font-semibold text-ink">지표 비교 <EdgeSummary r={r} /></h2>
-              <span className="text-[11px] text-ink-tertiary">둘이 {LANE_LABEL[r.mainLane]}에서 붙은 {n}판 평균 · 괄호는 평소</span>
+              <span className="text-[11px] text-ink-tertiary">둘이 {LANE_LABEL[r.mainLane]}에서 붙은 {r.lanes[0].games}판 평균 · 괄호는 평소</span>
             </div>
             <ul className="divide-y divide-hairline/50 text-xs tabular-nums">
               {r.comparison.map((c) => <CompareRow key={c.key} c={c} />)}
@@ -248,6 +248,7 @@ function Stat({ label, value, sub, color = "text-ink" }: { label: string; value:
 
 function EdgeSummary({ r }: { r: Rivalry }) {
   const { a, b } = r.edge;
+  if (r.comparison.every((c) => c.diff === null)) return <span className="text-xs"> · 자료 부족</span>;
   if (a === b) return <span className="ml-1 text-xs font-normal text-ink-subtle">· 팽팽 ({a}:{b})</span>;
   const lead = a > b ? r.a.nickname : r.b.nickname;
   return (
@@ -269,7 +270,7 @@ function CompareRow({ c }: { c: MetricCompare }) {
           {win && <span className="rounded bg-win/15 px-1 text-[10px] font-semibold text-win">우세</span>}
           {lose && <span className="rounded bg-lose/10 px-1 text-[10px] text-lose/90">열세</span>}
         </div>
-        <div className="text-[10px] text-ink-tertiary">(평소 {f(v.usual)}){v.n < r_n(c) ? ` · ${v.n}판` : ""}</div>
+        <div className="text-[10px] text-ink-tertiary">(평소 {f(v.usual)}) · {v.n}판</div>
       </div>
     );
   };
@@ -278,16 +279,14 @@ function CompareRow({ c }: { c: MetricCompare }) {
       {side(c.a, "a")}
       <div className="text-center">
         <div className="text-[11px] text-ink-subtle">{c.label}</div>
-        {c.better === null && c.a.value !== null && c.b.value !== null && <div className="text-[10px] text-ink-tertiary">비슷</div>}
+        {c.diff === null && <div className="text-[10px] text-ink-tertiary">자료 부족</div>}
+        {c.better === null && c.diff !== null && <div className="text-[10px] text-ink-tertiary">비슷</div>}
         {c.better !== null && c.diff !== null && <div className="text-[10px] text-ink-tertiary">차이 {c.diff.toFixed(meta.digits)}{meta.unit ?? ""}</div>}
       </div>
       {side(c.b, "b")}
     </li>
   );
 }
-/** 판수 표시 기준: 두 사람 중 많은 쪽 (적은 쪽만 "n판" 표시) */
-const r_n = (c: MetricCompare) => Math.max(c.a.n, c.b.n);
-
 function Tips({ s, color }: { s: SideSummary; color: "blue" | "red" }) {
   return (
     <div className="space-y-1">

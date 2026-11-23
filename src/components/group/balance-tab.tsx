@@ -619,6 +619,7 @@ function VerdictCard({ analysis }: { analysis: TeamAnalysis }) {
       )}
       <p className="text-[11px] text-ink-tertiary break-keep">
         내전 기록(팀 점수 합·비선호 라인·팀원 궁합·맞라인 상대 전적)으로 계산한 예상치입니다.
+        {analysis.sparseHistory && " 이번 편성의 판정에 쓰인 조합 기록이 적습니다."}
         {analysis.lowSample.length > 0 && ` 판수가 적은 선수(${analysis.lowSample.slice(0, 4).join(", ")}${analysis.lowSample.length > 4 ? " 외" : ""})가 있어 신뢰도가 낮습니다.`}
       </p>
     </Card>

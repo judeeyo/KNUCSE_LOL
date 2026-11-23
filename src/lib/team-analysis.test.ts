@@ -51,6 +51,16 @@ describe("우세/열세 판정", () => {
     expect(a.reasons.some((r) => r.favors === "red" && r.text.includes("비선호 라인"))).toBe(true);
   });
 
+  it("같은 편성의 2승은 여러 독립 경기처럼 취급하지 않는다", () => {
+    const blue = team("b", [5, 5, 5, 5, 5]);
+    const red = team("r", [5, 5, 5, 5, 5]);
+    const records = ["1", "2"].map(id => match(blue.map(p => p.nickname), red.map(p => p.nickname), true, id));
+    const analysis = analyzeTeams(blue, red, buildHistoryIndex(records));
+    expect(analysis.blueWinProb).toBeGreaterThan(0.5);
+    expect(analysis.blueWinProb).toBeLessThan(0.6);
+    expect(analysis.sparseHistory).toBe(true);
+  });
+
   it("함께 자주 이긴 팀원과 맞라인 상대 전적을 반영", () => {
     const blue = team("b", [5, 5, 5, 5, 5]);
     const red = team("r", [5, 5, 5, 5, 5]);

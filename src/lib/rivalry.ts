@@ -360,10 +360,11 @@ function buildTitles(r: Omit<Rivalry, "titles" | "memorable" | "rank" | "compari
 }
 
 /** 쌍별로 집계한 라이벌 목록 (맞대결 RIVALRY_MIN_GAMES 판 이상, 정렬 점수 순) */
-export function buildRivalries(group: Group, now: number = Date.now(), minGames = RIVALRY_MIN_GAMES): Rivalry[] {
+export function buildRivalries(group: Group, now: number = Date.now(), minGames = RIVALRY_MIN_GAMES, onlyLane?: Lane): Rivalry[] {
   const usualOf = buildUsual(group.matches);
   const out: Rivalry[] = [];
-  for (const [key, games] of collect(group.matches)) {
+  for (const [key, allGames] of collect(group.matches)) {
+    const games = onlyLane ? allGames.filter((g) => g.lane === onlyLane) : allGames;
     if (games.length < minGames) continue;
     const n = games.length;
     const aWins = games.filter((g) => g.aWin).length;
@@ -389,7 +390,8 @@ export function buildRivalries(group: Group, now: number = Date.now(), minGames 
       const nickname = games[0][s].nickname;
       const champs = champUses(games, s);
       const usualRows = usualOf(nickname, lanes[0].lane);
-      const mine = games.map((g) => gameMetrics(g.match, g[s]));
+      const laneGames = games.filter((g) => g.lane === lanes[0].lane);
+      const mine = laneGames.map((g) => gameMetrics(g.match, g[s]));
       const metrics = Object.fromEntries(KEYS.map((k) => {
         const m = meanOf(mine, k);
         return [k, { value: m.value, n: m.n, usual: meanOf(usualRows, k).value }];
@@ -405,7 +407,7 @@ export function buildRivalries(group: Group, now: number = Date.now(), minGames 
           assists: round1(avg(games.map((g) => g[s].assists))),
         },
         metrics,
-        tips: buildTips(games, s, usualRows),
+        tips: buildTips(laneGames, s, usualRows),
       };
     };
 
@@ -443,7 +445,7 @@ export function findRivalry(group: Group, x: string, y: string, now: number = Da
 
 /** 특집 묶음(예: 탑 삼국지)의 쌍별 기록과 사람별 합계 */
 export function buildFeatured(group: Group, featured: (typeof FEATURED_GROUPS)[number], now: number = Date.now()) {
-  const all = buildRivalries(group, now, 1);
+  const all = buildRivalries(group, now, 1, featured.lane);
   const present = featured.players.filter((n) => group.matches.some((m) => m.players.some((p) => p.nickname === n)));
   const pairs: Rivalry[] = [];
   for (let i = 0; i < present.length; i++) {

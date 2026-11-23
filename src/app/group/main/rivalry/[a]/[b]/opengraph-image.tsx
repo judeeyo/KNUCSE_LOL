@@ -2,7 +2,6 @@ import { ImageResponse } from "next/og";
 import { readCountedMatches } from "@/lib/server/public-read";
 import { C, championIconData, championSplashData, Icon, OG_SIZE, ogFont } from "@/lib/server/og";
 import { findRivalry, type SideSummary } from "@/lib/rivalry";
-import { LANE_LABEL } from "@/lib/profile";
 import type { Group } from "@/lib/types";
 
 // 라이벌 링크 카톡 미리보기: 두 사람 주 챔피언 일러스트, 전적, 칭호, 최근 흐름
@@ -62,7 +61,7 @@ export default async function Image({ params }: { params: Promise<{ a: string; b
         <div style={{ position: "absolute", top: 0, left: 0, width: 1200, height: 630, display: "flex", flexDirection: "column", padding: "36px 52px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 26, color: C.muted }}>
             <span style={{ color: C.primary }}>컴학내전 · 라이벌전</span>
-            <span>{LANE_LABEL[r.mainLane]} 맞대결 {r.games.length}판</span>
+            <span>전체 맞대결 {r.games.length}판</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexGrow: 1 }}>
             <Side s={r.a} color={C.blue} align="left" data={iconsA} />

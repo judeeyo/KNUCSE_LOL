@@ -38,6 +38,7 @@ export interface TeamAnalysis {
   verdict: Verdict;
   label: string; // "블루팀 약간 우세" 등
   reasons: AnalysisReason[]; // 영향 큰 순, 최대 3개
+  sparseHistory: boolean;
   lowSample: string[]; // 판수가 적은 선수
 }
 
@@ -96,6 +97,7 @@ export function analyzeTeams(blue: BalancerPlayer[], red: BalancerPlayer[], hist
   const w = ANALYSIS_WEIGHTS;
   const reasons: AnalysisReason[] = [];
   let logit = 0;
+  let maxPairGames = 0;
   const add = (value: number, text: (favors: "blue" | "red") => string) => {
     if (Math.abs(value) < 1e-9) return;
     logit += value;
@@ -128,7 +130,8 @@ export function analyzeTeams(blue: BalancerPlayer[], red: BalancerPlayer[], hist
         const rec = history.together.get(pairKey(team[i].nickname, team[j].nickname));
         if (!rec || rec.games < w.minGames) continue;
         const edge = shrunkEdge(rec.wins, rec.games);
-        total += edge;
+        maxPairGames = Math.max(maxPairGames, rec.games);
+        total += edge / (team.length * (team.length - 1) / 2);
         if (!best || Math.abs(edge) > Math.abs(best.edge)) best = { a: team[i].nickname, b: team[j].nickname, ...rec, edge };
       }
     }
@@ -151,7 +154,8 @@ export function analyzeTeams(blue: BalancerPlayer[], red: BalancerPlayer[], hist
     const edge = shrunkEdge(rec.wins, rec.games);
     if (Math.abs(edge) < 0.05) continue;
     const [winner, loser, wins] = edge > 0 ? [bp.nickname, rp.nickname, rec.wins] : [rp.nickname, bp.nickname, rec.games - rec.wins];
-    add(w.matchup * edge, () => `${LANE_LABEL[bp.assignedLane!]} 맞라인 ${winner} 강세 (${loser} 상대 ${rec.games}전 ${wins}승)`);
+    maxPairGames = Math.max(maxPairGames, rec.games);
+    add(w.matchup * edge / blue.length, () => `${LANE_LABEL[bp.assignedLane!]} 맞라인 ${winner} 강세 (${loser} 상대 ${rec.games}전 ${wins}승)`);
   }
 
   const raw = sigmoid(logit);
@@ -163,6 +167,7 @@ export function analyzeTeams(blue: BalancerPlayer[], red: BalancerPlayer[], hist
   const lowSample = [...blue, ...red].filter((p) => p.gamesPlayed < w.lowSampleGames).map((p) => p.nickname);
 
   return {
+    sparseHistory: maxPairGames < w.lowSampleGames,
     blueWinProb,
     favored,
     verdict,

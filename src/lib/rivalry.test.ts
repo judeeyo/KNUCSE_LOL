@@ -74,6 +74,19 @@ describe("라이벌 (같은 라인 맞대결)", () => {
     expect(f.standings.map((s) => s.nickname)).toEqual(["우효원", "뽀스탈게요", "DoYouKnowIMO"]);
   });
 
+  it("탑에서 세 번, 서폿에서 한 번 맞붙으면 탑 지표와 특집은 세 판만 센다", () => {
+    const ms = [1, 2, 3, 4].map(() => match(blueTeam("A"), redTeam("B"), true));
+    for (const p of ms[3].players) {
+      if (p.lane === "support") p.lane = "top";
+      else if (p.lane === "top") { p.lane = "support"; p.cs = 0; }
+    }
+    const g = group(ms);
+    const r = findRivalry(g, "A", "B")!;
+    expect(r.games).toHaveLength(4);
+    expect(r.a.metrics.csPerMin).toMatchObject({ n: 3, value: 8, usual: 8 });
+    expect(buildFeatured(g, { title: "탑", subtitle: "", lane: "top", players: ["A", "B"] }).standings[0].games).toBe(3);
+  });
+
   it("주소는 이름 순서와 상관없이 하나", () => {
     expect(rivalryHref("우효원", "뽀스탈게요")).toBe(rivalryHref("뽀스탈게요", "우효원"));
   });

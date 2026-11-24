@@ -499,6 +499,7 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
             </div>
           )}
 
+          <CopyLineup key={optionIdx} result={result} optionNumber={optionIdx + 1} />
           {analysis && <VerdictCard analysis={analysis} />}
 
           {mode === "paired" && (
@@ -520,6 +521,43 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function CopyLineup({ result, optionNumber }: { result: BalanceResult; optionNumber: number }) {
+  const [status, setStatus] = useState<"idle" | "copied" | "manual">("idle");
+  const formatTeam = (label: string, players: BalancerPlayer[]) => [
+    label,
+    ...players.map((p) => p.assignedLane ? `${LANE_LABEL[p.assignedLane]} · ${p.nickname}` : p.nickname),
+  ].join("\n");
+  const message = [
+    `컴학내전 팀 편성 · ${optionNumber}안`,
+    formatTeam("🔵 블루팀", result.team1),
+    formatTeam("🔴 레드팀", result.team2),
+  ].join("\n\n");
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(message);
+      setStatus("copied");
+    } catch {
+      setStatus("manual");
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <Button type="button" variant="secondary" className="w-full" onClick={copy}>
+        카톡용 결과 복사
+      </Button>
+      <p role="status" className="text-sm text-ink-muted">
+        {status === "copied" && "복사했어요. 카톡 채팅창에 붙여넣으세요."}
+        {status === "manual" && "아래 내용을 길게 눌러 복사한 뒤 카톡에 붙여넣으세요."}
+      </p>
+      {status === "manual" && <textarea aria-label="카톡용 팀 편성 결과" readOnly value={message}
+        onFocus={(e) => e.currentTarget.select()} rows={8}
+        className="w-full rounded-lg border border-hairline bg-surface-1 p-3 text-sm" />}
     </div>
   );
 }

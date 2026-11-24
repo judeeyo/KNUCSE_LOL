@@ -1,5 +1,6 @@
 "use client";
 
+import { parsePastedPairs } from "@/lib/pasted-pairs";
 import { estimateRatings, RATING_VERSION } from "@/lib/rating-model";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { analyzeTeams, buildHistoryIndex, type TeamAnalysis } from "@/lib/team-analysis";
@@ -60,9 +61,11 @@ const MAX_OPTIONS = 3;
 /** 버튼을 누른 뒤 "계산 중" 표시를 보여 주는 최소 시간. 계산은 즉시 끝나지만 눌렸다는 느낌을 주기 위함 */
 const RUN_FEEDBACK_MS = 450;
 
-export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[]; group: Group }) {
+export function BalanceTab({ playerStats, group, initialMode = "auto" }: { playerStats: PlayerStats[]; group: Group; initialMode?: "auto" | "paired" }) {
   const [ratingMethod, setRatingMethod] = useState<"legacy" | "context">("legacy");
-  const [mode, setMode] = useState<"auto" | "paired">("auto");
+  const [mode, setMode] = useState<"auto" | "paired">(initialMode);
+  const [pairText, setPairText] = useState("");
+  const [pasteStatus, setPasteStatus] = useState<{ text: string; error?: boolean } | null>(null);
   const [balancePairs, setBalancePairs] = useState<BalancePair[]>(Array.from({ length: 5 }, () => ["", ""]));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [options, setOptions] = useState<BalanceResult[]>([]);
@@ -247,6 +250,26 @@ export function BalanceTab({ playerStats, group }: { playerStats: PlayerStats[];
           <span className="text-primary">전적(라인별 판수)</span>에서 자동으로 가져옵니다. 점수에 마우스를 올리면 계산 근거가 보입니다.</>}
         </p>
       </Card>
+
+      {mode === "paired" && (
+        <Card className="space-y-2">
+          <label htmlFor="paste-pairs" className="block text-sm font-semibold">밸런스 짝 붙여넣기</label>
+          <p className="text-xs text-ink-muted">한 줄에 두 명씩 5줄을 붙여넣으세요. 이름이나 게임 닉네임을 쓸 수 있어요.</p>
+          <textarea id="paste-pairs" rows={5} value={pairText} placeholder={"주영 용태\n문주 보규\n효원 기수\n윤호 찬웅\n재경 동희"}
+            className="w-full rounded-lg border border-hairline bg-surface-1 p-3 text-base"
+            onChange={(e) => { setPairText(e.target.value); setPasteStatus(null); }} />
+          <Button type="button" variant="secondary" disabled={!pairText.trim()} onClick={() => {
+            const parsed = parsePastedPairs(pairText, allPlayers.map((p) => p.nickname), group.members);
+            if (!parsed.pairs) { setPasteStatus({ text: parsed.error, error: true }); return; }
+            setSelected(new Set(parsed.pairs.flat()));
+            setBalancePairs(parsed.pairs);
+            clearResult();
+            setPasteStatus({ text: "10명을 선택하고 밸런스 짝 5개를 적용했어요." });
+          }}>참가자와 짝 적용</Button>
+          {pasteStatus && <p role={pasteStatus.error ? "alert" : "status"}
+            className={`whitespace-pre-line text-sm ${pasteStatus.error ? "text-lose" : "text-ink-muted"}`}>{pasteStatus.text}</p>}
+        </Card>
+      )}
 
       {/* Player Selection */}
       <div>

@@ -30,7 +30,7 @@ export default function TeamsPage() {
         <h1 className="text-xl font-bold">컴학내전 팀 짜기</h1>
         <Link href="/group/main" className="text-sm text-primary-hover">전체 기록 보기</Link>
       </header>
-      {group ? <BalanceTab group={group} playerStats={players} /> : error ? (
+      {group ? <BalanceTab group={group} playerStats={players} initialMode="paired" /> : error ? (
         <LoadError message={error} onRetry={() => { setError(""); setAttempt((n) => n + 1); }} />
       ) : <p role="status" className="text-sm text-ink-subtle">선수와 경기 기록을 불러오는 중…</p>}
     </main>

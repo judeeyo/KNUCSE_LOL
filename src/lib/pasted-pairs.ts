@@ -15,10 +15,10 @@ export function parsePastedPairs(input: string, nicknames: string[], members: Me
     add(nickname, nickname);
     const member = roster.get(nickname);
     for (const alias of member?.aliases ?? []) add(alias, nickname);
-    const realName = member?.realName?.trim();
-    if (realName) {
-      add(realName, nickname);
-      if (/^[가-힣]{3}$/.test(realName)) add(realName.slice(1), nickname);
+    for (const name of (member?.realName ?? "").split(",")) {
+      const trimmed = name.trim();
+      add(trimmed, nickname);
+      if (/^[가-힣]{3}$/.test(trimmed)) add(trimmed.slice(1), nickname);
     }
   }
 

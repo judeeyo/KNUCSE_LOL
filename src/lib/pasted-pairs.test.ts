@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { parsePastedPairs } from "./pasted-pairs";
 import type { Member } from "./types";
 
-const members: Member[] = [{ id: "1", nickname: "내전 계정", realName: "이주영", aliases: ["부캐"], groupId: "main", joinedAt: "" }];
+const members: Member[] = [{ id: "1", nickname: "내전 계정", realName: "이주영, 주디", aliases: ["부캐"], groupId: "main", joinedAt: "" }];
 const names = ["내전 계정", ...Array.from({ length: 9 }, (_, i) => `P${i + 1}`)];
 const rest = "\nP2 P3\nP4 P5\nP6 P7\nP8 P9";
 it("등록된 이름과 별칭으로 같은 선수를 찾는다", () => {
-  for (const token of ["주영", "이주영", "부캐", "내전 계정"]) {
+  for (const token of ["주영", "이주영", "주디", "부캐", "내전 계정"]) {
     expect(parsePastedPairs(`${token}, p1${rest}`, names, members).pairs?.[0]).toEqual(["내전 계정", "P1"]);
   }
 });

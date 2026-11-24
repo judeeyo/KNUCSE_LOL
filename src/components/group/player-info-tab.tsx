@@ -136,7 +136,7 @@ export function PlayerInfoTab({
       await updateMemberProfile(targetNickname, {
         tier: editTier,
         preferredLanes: editLanes,
-        realName: editRealName,
+        realName: [...new Set(editRealName.split(",").map((name) => name.trim()).filter(Boolean))].join(", "),
       });
     } catch (err) {
       setSaving(false);
@@ -425,8 +425,8 @@ export function PlayerInfoTab({
           {/* Real Name */}
           <Input
             id="real-name"
-            label="실명"
-            placeholder="실명을 입력하세요"
+            label="이름 (여러 개 가능)"
+            placeholder="쉼표로 구분 (예: 홍길동, 길동)"
             value={editRealName}
             onChange={(e) => setEditRealName(e.target.value)}
           />

@@ -434,3 +434,109 @@ export function formatDraftMessage(state: DraftState, advice: DraftAdvice, ourLa
   if (advice.pickOrder.length) lines.push("", ...advice.pickOrder.map((t) => `· ${t}`));
   return lines.join("\n");
 }
+
+// ─── 순서대로 진행하는 밴픽 (토너먼트 드래프트) ───
+
+export type DraftSide = "blue" | "red";
+export interface DraftStep {
+  side: DraftSide;
+  kind: "ban" | "pick";
+}
+
+/** 랭크·토너먼트 드래프트 순서: 밴 3-3 → 픽 B R R B B R → 밴 2-2 (레드 먼저) → 픽 R B B R */
+export const DRAFT_SEQUENCE: DraftStep[] = [
+  ..."BRBRBR".split("").map((s) => ({ side: s === "B" ? "blue" : "red", kind: "ban" }) as DraftStep),
+  ..."BRRBBR".split("").map((s) => ({ side: s === "B" ? "blue" : "red", kind: "pick" }) as DraftStep),
+  ..."RBRB".split("").map((s) => ({ side: s === "B" ? "blue" : "red", kind: "ban" }) as DraftStep),
+  ..."RBBR".split("").map((s) => ({ side: s === "B" ? "blue" : "red", kind: "pick" }) as DraftStep),
+];
+
+export interface PickSuggestion {
+  nickname: string;
+  lane: Lane;
+  champion: string;
+  candidate: Candidate;
+  priority: number;
+  why: string[];
+}
+
+/**
+ * 지금 우리 픽 차례에 무엇을 먼저 가져갈지.
+ * 추천 조합(상위 안)에 들어 있는 챔피언 중에서
+ *  - 상대 선수도 잘하는 챔피언(뺏길 수 있음)
+ *  - 남은 주력이 하나뿐인 선수
+ *  - 맞라인 상대가 이미 픽해서 카운터를 칠 수 있는 라인
+ * 을 앞으로, 후보가 많은데 상대 맞라인이 아직 안 정해진 라인은 뒤로 보낸다.
+ */
+export function suggestNextPicks(index: DraftIndex, state: DraftState, advice: DraftAdvice, limit = 4): PickSuggestion[] {
+  const enemyComfort = new Map<string, { nick: string; games: number }>();
+  for (const slot of state.theirs) {
+    if (state.theirPicks[slot.nickname]) continue;
+    for (const [champ, rec] of index.players.get(slot.nickname) || []) {
+      if (rec.games >= 2 && (enemyComfort.get(champ)?.games || 0) < rec.games) enemyComfort.set(champ, { nick: slot.nickname, games: rec.games });
+    }
+  }
+  const comfortCount = new Map(advice.ourPlans.map((p) => [p.nickname, p.candidates.filter((c) => !c.isNew && c.laneGames >= 2).length]));
+  const out: PickSuggestion[] = [];
+  advice.options.forEach((option, rank) => {
+    for (const p of option.picks) {
+      if (p.candidate.locked) continue;
+      const why: string[] = [];
+      // 순서 판단(뺏길 위험·카운터)이 숙련도보다 앞서도록 숙련도 점수는 줄여서 더한다
+      let priority = 0.4 * p.candidate.score - rank * 0.3;
+      const e = enemyComfort.get(p.champion);
+      if (e) { priority += 0.6 + 0.15 * e.games; why.push(`상대 ${e.nick}도 ${e.games}판 한 챔피언 — 뺏기기 전에`); }
+      const comfort = comfortCount.get(p.nickname) || 0;
+      if (comfort === 1) { priority += 0.8; why.push("남은 주력이 이것 하나"); }
+      const opp = state.theirs.find((t) => t.lane === p.lane);
+      const oppPick = opp ? state.theirPicks[opp.nickname] : undefined;
+      if (oppPick) { priority += 0.5; why.push(`상대 ${LANE_LABEL[p.lane]} ${oppPick} 확인됨`); }
+      else if (comfort >= 3) { priority -= 0.8; why.push("후보가 많아 나중에 뽑아도 됨"); }
+      if (rank > 0) why.push(`${rank + 1}안 조합`);
+      out.push({ nickname: p.nickname, lane: p.lane, champion: p.champion, candidate: p.candidate, priority, why });
+    }
+  });
+  const seen = new Set<string>();
+  return out
+    .sort((a, b) => b.priority - a.priority)
+    .filter((s) => (seen.has(s.champion) ? false : (seen.add(s.champion), true)))
+    .slice(0, limit);
+}
+
+/** 상대가 뽑은 챔피언이 누구 것인지 추정: 그 라인에서 해 본 선수 → 챔피언 기본 라인 → 남은 첫 자리 */
+export function guessPickOwner(index: DraftIndex, champion: string, open: DraftSlot[]): DraftSlot | undefined {
+  if (open.length === 0) return undefined;
+  let best: { slot: DraftSlot; games: number } | null = null;
+  for (const slot of open) {
+    const g = index.players.get(slot.nickname)?.get(champion)?.byLane[slot.lane]?.games || 0;
+    if (g > 0 && (!best || g > best.games)) best = { slot, games: g };
+  }
+  if (best) return best.slot;
+  const meta = getChampionMeta(champion);
+  if (meta) {
+    for (const lane of meta.lanes) {
+      const s = open.find((o) => o.lane === lane);
+      if (s) return s;
+    }
+  }
+  return open[0];
+}
+
+/** 밴픽 에이전트 주소: /draft?b=탑&b=정글…&r=… (라인 순서대로 5명씩) */
+export function draftHref(blue: DraftSlot[], red: DraftSlot[]): string {
+  const q = new URLSearchParams();
+  for (const [key, team] of [["b", blue], ["r", red]] as const) {
+    for (const s of [...team].sort(byLane)) q.append(key, s.nickname);
+  }
+  return `/draft?${q.toString()}`;
+}
+
+export function parseDraftQuery(search: string): { blue: DraftSlot[]; red: DraftSlot[] } | null {
+  const q = new URLSearchParams(search);
+  const b = q.getAll("b"), r = q.getAll("r");
+  if (b.length !== 5 || r.length !== 5 || new Set([...b, ...r]).size !== 10 || [...b, ...r].some((n) => !n.trim())) return null;
+  return {
+    blue: b.map((nickname, i) => ({ nickname, lane: LANE_ORDER[i] })),
+    red: r.map((nickname, i) => ({ nickname, lane: LANE_ORDER[i] })),
+  };
+}

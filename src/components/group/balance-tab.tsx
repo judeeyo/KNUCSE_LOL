@@ -5,10 +5,10 @@ import { estimateRatings, RATING_VERSION } from "@/lib/rating-model";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { analyzeTeams, buildHistoryIndex, type TeamAnalysis } from "@/lib/team-analysis";
 import { BalancePairEditor, type BalancePair } from "./balance-pair-editor";
-import { DraftAssistant } from "./draft-assistant";
+import { draftHref } from "@/lib/draft";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink, Brain } from "lucide-react";
+import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink, Brain, Swords } from "lucide-react";
 import type { PlayerStats } from "@/lib/stats";
 import type { Group, Lane } from "@/lib/types";
 import {
@@ -523,6 +523,12 @@ export function BalanceTab({ playerStats, group, initialMode = "auto" }: { playe
             </div>
           )}
 
+          {hasDraft(result) && (
+            <a href={resultDraftHref(result)} target="_blank" rel="noopener"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover">
+              <Swords size={16} /> 이 팀으로 밴픽 에이전트 열기
+            </a>
+          )}
           <CopyLineup key={optionIdx} result={result} optionNumber={optionIdx + 1} />
           {analysis && <VerdictCard analysis={analysis} />}
 
@@ -543,17 +549,25 @@ export function BalanceTab({ playerStats, group, initialMode = "auto" }: { playe
             <TeamCard team={result.team1} label="블루팀" color="blue" tiers={displayTiers} experimental={ratingMethod === "context"} />
             <TeamCard team={result.team2} label="레드팀" color="red" tiers={displayTiers} experimental={ratingMethod === "context"} />
           </div>
-          {result.team1.length === 5 && result.team2.length === 5 && result.team1.every((p) => p.assignedLane) && (
-            <DraftAssistant key={optionIdx} team1={result.team1} team2={result.team2} matches={group.matches} />
-          )}
         </div>
       )}
     </div>
   );
 }
 
+/** 10명 모두 라인이 정해진 편성인지 (밴픽 에이전트는 라인별 5:5 가 필요) */
+function hasDraft(result: BalanceResult): boolean {
+  return result.team1.length === 5 && result.team2.length === 5 && [...result.team1, ...result.team2].every((p) => p.assignedLane);
+}
+
+function resultDraftHref(result: BalanceResult): string {
+  const slots = (t: BalancerPlayer[]) => t.map((p) => ({ nickname: p.nickname, lane: p.assignedLane! }));
+  return draftHref(slots(result.team1), slots(result.team2));
+}
+
 function CopyLineup({ result, optionNumber }: { result: BalanceResult; optionNumber: number }) {
   const [status, setStatus] = useState<"idle" | "copied" | "manual">("idle");
+  const [fullMessage, setFullMessage] = useState("");
   const formatTeam = (label: string, players: BalancerPlayer[]) => [
     label,
     ...players.map((p) => p.assignedLane ? `${LANE_LABEL[p.assignedLane]} · ${p.nickname}` : p.nickname),
@@ -565,8 +579,10 @@ function CopyLineup({ result, optionNumber }: { result: BalanceResult; optionNum
   ].join("\n\n");
 
   async function copy() {
+    const text = hasDraft(result) ? `${message}\n\n⚔️ 밴픽 에이전트\n${window.location.origin}${resultDraftHref(result)}` : message;
+    setFullMessage(text);
     try {
-      await navigator.clipboard.writeText(message);
+      await navigator.clipboard.writeText(text);
       setStatus("copied");
     } catch {
       setStatus("manual");
@@ -582,7 +598,7 @@ function CopyLineup({ result, optionNumber }: { result: BalanceResult; optionNum
         {status === "copied" && "복사했어요. 카톡 채팅창에 붙여넣으세요."}
         {status === "manual" && "아래 내용을 길게 눌러 복사한 뒤 카톡에 붙여넣으세요."}
       </p>
-      {status === "manual" && <textarea aria-label="카톡용 팀 편성 결과" readOnly value={message}
+      {status === "manual" && <textarea aria-label="카톡용 팀 편성 결과" readOnly value={fullMessage || message}
         onFocus={(e) => e.currentTarget.select()} rows={8}
         className="w-full rounded-lg border border-hairline bg-surface-1 p-3 text-sm" />}
     </div>

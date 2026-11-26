@@ -83,3 +83,34 @@ describe("밴픽 도우미", () => {
     expect(resolveChampionInput("없는챔")).toBeNull();
   });
 });
+
+describe("순서대로 밴픽", () => {
+  it("드래프트 순서는 밴 10·픽 10", async () => {
+    const { DRAFT_SEQUENCE } = await import("./draft");
+    expect(DRAFT_SEQUENCE).toHaveLength(20);
+    expect(DRAFT_SEQUENCE.filter((s) => s.kind === "pick" && s.side === "blue")).toHaveLength(5);
+    expect(DRAFT_SEQUENCE[6]).toEqual({ side: "blue", kind: "pick" });
+    expect(DRAFT_SEQUENCE[12]).toEqual({ side: "red", kind: "ban" });
+  });
+
+  it("다음 픽 추천은 남은 챔피언만, 상대 픽 주인은 그 라인에서 해 본 선수", async () => {
+    const { suggestNextPicks, guessPickOwner } = await import("./draft");
+    const state = { ...base, theirPicks: { 상대미드: "아리" } };
+    const s = suggestNextPicks(index, state, adviseDraft(index, state));
+    expect(s.length).toBeGreaterThan(0);
+    expect(s.some((x) => x.champion === "아리")).toBe(false);
+    expect(guessPickOwner(index, "쓰레쉬", theirs)?.nickname).toBe("상대서폿");
+    expect(guessPickOwner(index, "다리우스", theirs.slice(1))?.lane).toBe("jungle"); // 탑이 없으면 남은 자리로
+  });
+});
+
+describe("밴픽 주소", () => {
+  it("만든 주소를 다시 읽으면 같은 팀·라인", async () => {
+    const { draftHref, parseDraftQuery } = await import("./draft");
+    const href = draftHref([...ours].reverse(), theirs);
+    const parsed = parseDraftQuery(href.split("?")[1]);
+    expect(parsed?.blue).toEqual(ours);
+    expect(parsed?.red).toEqual(theirs);
+    expect(parseDraftQuery("b=a&r=b")).toBeNull();
+  });
+});

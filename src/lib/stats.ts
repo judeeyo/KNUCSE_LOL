@@ -117,6 +117,41 @@ export interface ChampionUsage {
   avgAssists: number;
 }
 
+// 같은 경기·같은 역할끼리 비교한다. 결측인 항목은 양쪽 모두 제외한다.
+function rolePerformance(group: Group): Map<PlayerStat, number> {
+  const scores = new Map<PlayerStat, number>();
+  const ratio = (a?: number | null, b?: number | null) =>
+    a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) ? null :
+      a + b === 0 ? 50 : 100 * a / (a + b);
+  const mean = (values: (number | null)[]) => {
+    const valid = values.filter((v): v is number => v !== null);
+    return valid.length ? valid.reduce((sum, v) => sum + v, 0) / valid.length : null;
+  };
+  for (const match of group.matches) {
+    for (const p of match.players) {
+      const opponents = match.players.filter(q => p.lane && q.lane === p.lane && q.team !== p.team);
+      const q = opponents.length === 1 ? opponents[0] : undefined;
+      const parts: [number, number | null][] = [[20, p.win ? 100 : 0]];
+      if (q) {
+        // 두 선수 모두 기록된 가장 늦은 시점을 사용한다.
+        const minute = p.phaseStats?.["15"] && q.phaseStats?.["15"] ? "15" : "10";
+        const a = p.phaseStats?.[minute], b = q.phaseStats?.[minute];
+        const support = p.lane === "support";
+        const lane = mean([ratio(a?.gold, b?.gold), ratio(a?.xp, b?.xp), support ? null : ratio(a?.cs, b?.cs)]);
+        const combat = mean([ratio(p.kills + p.assists, q.kills + q.assists),
+          ratio(q.deaths + 1, p.deaths + 1), support ? null : ratio(p.damageDealt, q.damageDealt)]);
+        const role = support ? mean([ratio(p.visionScore, q.visionScore), ratio(p.ccScore, q.ccScore),
+          ratio(p.shieldingDone, q.shieldingDone), ratio(p.healingDone, q.healingDone)]) :
+          mean([ratio(p.objectiveDamage, q.objectiveDamage), ratio(p.visionScore, q.visionScore)]);
+        parts.push([30, lane], [30, combat], [20, role]);
+      }
+      // 누락된 영역은 중립. 관측된 승패만으로 0점이나 100점이 되는 것을 방지한다.
+      scores.set(p, parts.reduce((sum, [weight, value]) => sum + weight * ((value ?? 50) - 50) / 100, 50));
+    }
+  }
+  return scores;
+}
+
 export function buildPlayerStats(group: Group): PlayerStats[] {
   const map = new Map<string, PlayerStat[]>();
   const minutesMap = new Map<string, number>(); // nickname → 총 플레이 시간(분)
@@ -296,44 +331,10 @@ export function buildPlayerStats(group: Group): PlayerStats[] {
       };
     });
 
-  // ── 종합 점수: 성적 테이블 컬럼 기반, 그룹 내 백분위 가중합 (0~100) ──
-  // 승률(판수 보정) 30% + MVP/ACE 15% + KDA 10% + 킬관여 10% + 분당CS 10%
-  // + 시야 10% + 골드당 딜 10% + 판수 5%, 마지막에 표본 신뢰도 계수 적용
-  const metrics = results.map((r) => ({
-    adjWinRate: ((r.wins + 5) / (r.gamesPlayed + 10)) * 100, // 라플라스 보정 (판수 적으면 50%로 수렴)
-    kda: r.avgKda,
-    kp: r.avgKillParticipation,
-    cs: r.csPerMin,
-    vision: r.visionGames > 0 ? r.avgVision : null,
-    dpg: r.damageGames > 0 ? r.damagePerGold : null,
-    mvpAce: (r.mvpCount + r.aceCount * 0.5) / r.gamesPlayed,
-    games: r.gamesPlayed,
-  }));
-  const pools = {
-    adjWinRate: metrics.map((m) => m.adjWinRate),
-    kda: metrics.map((m) => m.kda),
-    kp: metrics.map((m) => m.kp),
-    cs: metrics.map((m) => m.cs),
-    vision: collected(metrics.map((m) => m.vision)),
-    dpg: collected(metrics.map((m) => m.dpg)),
-    mvpAce: metrics.map((m) => m.mvpAce),
-    games: metrics.map((m) => m.games),
-  };
-  results.forEach((r, i) => {
-    const m = metrics[i];
-    const base =
-      percentileOf(pools.adjWinRate, m.adjWinRate) * 0.3 +
-      percentileOf(pools.mvpAce, m.mvpAce) * 0.15 +
-      percentileOf(pools.kda, m.kda) * 0.1 +
-      percentileOf(pools.kp, m.kp) * 0.1 +
-      percentileOf(pools.cs, m.cs) * 0.1 +
-      percentileOrNeutral(pools.vision, m.vision) * 0.1 +
-      percentileOrNeutral(pools.dpg, m.dpg) * 0.1 +
-      percentileOf(pools.games, m.games) * 0.05;
-    // 표본 신뢰도 계수: 판수가 적을수록 점수를 깎음 (3판 ≈ ×0.71, 10판 ≈ ×0.88, 30판 ≈ ×0.95)
-    const confidence = Math.sqrt(m.games / (m.games + 3));
-    r.totalScore = base * confidence;
-  });
+  const performance = rolePerformance(group);
+  for (const player of results) {
+    player.totalScore = avgOver(map.get(player.nickname)!, p => performance.get(p)!);
+  }
 
   return results.sort((a, b) => b.totalScore - a.totalScore);
 }
@@ -409,14 +410,13 @@ interface LaneAgg {
 /**
  * 포지션(라인)별 선수 순위. 각 라인에서 minGames 이상 플레이한 선수만 대상으로,
  * "그 라인에서의 성적"만 반영한 점수로 정렬한다. 점수 공식은 선수별 성적의
- * 종합 점수와 동일하되(승률 30% + MVP/ACE 15% + KDA 10% + 킬관여 10% + 분당CS 10%
- * + 시야 10% + 골드당 딜 10% + 판수 5%, 신뢰도 계수 적용), 지표와 백분위를 모두
- * 해당 라인 안에서 계산한다. 라인 순서는 탑→정글→미드→원딜→서폿 고정.
+ * 종합 점수와 동일하다. 라인 순서는 탑→정글→미드→원딜→서폿 고정.
  */
 export function buildLaneRankings(
   group: Group,
   minGames = LANE_RANK_MIN_GAMES
 ): LaneRanking[] {
+  const performance = rolePerformance(group);
   const perLane: Record<Lane, Map<string, LaneAgg>> = {
     top: new Map(),
     jungle: new Map(),
@@ -489,36 +489,15 @@ export function buildLaneRankings(
       };
     });
 
-    const col = (sel: (m: (typeof metrics)[number]) => number) => metrics.map(sel);
-    const pools = {
-      adjWinRate: col((m) => m.adjWinRate),
-      mvpAce: col((m) => m.mvpAce),
-      kda: col((m) => m.avgKda),
-      kp: col((m) => m.kp),
-      cs: col((m) => m.cs),
-      vision: collected(metrics.map((m) => m.vision)),
-      dpg: collected(metrics.map((m) => m.dpg)),
-      games: col((m) => m.games),
-    };
-
     const entries: LaneRankEntry[] = metrics.map((m) => {
-      const base =
-        percentileOf(pools.adjWinRate, m.adjWinRate) * 0.3 +
-        percentileOf(pools.mvpAce, m.mvpAce) * 0.15 +
-        percentileOf(pools.kda, m.avgKda) * 0.1 +
-        percentileOf(pools.kp, m.kp) * 0.1 +
-        percentileOf(pools.cs, m.cs) * 0.1 +
-        percentileOrNeutral(pools.vision, m.vision) * 0.1 +
-        percentileOrNeutral(pools.dpg, m.dpg) * 0.1 +
-        percentileOf(pools.games, m.games) * 0.05;
-      const confidence = Math.sqrt(m.games / (m.games + 3));
+      const games = group.matches.flatMap(match => match.players.filter(p => p.nickname === m.nickname && p.lane === lane));
       return {
         nickname: m.nickname,
         games: m.games,
         wins: m.wins,
         winRate: m.winRate,
         avgKda: m.avgKda,
-        score: base * confidence,
+        score: avgOver(games, p => performance.get(p)!),
         lastPlayedAt: lastPlayed.get(m.nickname) || "",
       };
     });
@@ -905,16 +884,8 @@ export function getBalancerPlayers(
   return playerStats.map((p) => {
     const tier = tierOverrides[p.nickname] || "";
     const parsed = parseTierScore(tier);
-    // 내전 성적: 종합점수(0~100 백분위)에서 표본 신뢰도 계수를 걷어낸 값을 쓰고,
-    // 판수가 적을수록 0 이 아니라 평균(5)으로 수렴시킨다 — 처음 온 사람을 "약한 사람"으로 취급하지 않도록.
-    const confidence = p.gamesPlayed > 0 ? Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 3)) : 0;
-    const base = confidence > 0 ? p.totalScore / confidence / 10 : 5;
-    const shrink = p.gamesPlayed / (p.gamesPlayed + 5);
-    const perfScore = 5 + (base - 5) * shrink;
-    // 티어가 있으면: 판수가 쌓일수록 티어보다 실제 전적을 더 신뢰 (최대 65%).
-    // 티어가 없으면: 아는 정보가 내전 전적뿐이므로 전적만 쓴다 (판수가 적으면 위에서 평균으로 수렴).
-    // (솔랭을 거의 안 하는 그룹이라 가짜 평균 티어를 섞으면 점수 차이만 뭉개진다)
-    const wPerf = parsed === null ? 1 : 0.65 * Math.sqrt(p.gamesPlayed / (p.gamesPlayed + 5));
+    const perfScore = p.totalScore / 10;
+    const wPerf = parsed === null ? 1 : 0.65;
     const score = parsed === null ? perfScore : parsed * (1 - wPerf) + perfScore * wPerf;
 
     return {

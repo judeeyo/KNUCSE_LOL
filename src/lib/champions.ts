@@ -128,3 +128,18 @@ export function getChampionSplashUrl(championName: string): string | null {
   const key = getChampionKey(championName);
   return key ? `https://ddragon.leagueoflegends.com/cdn/img/champion/centered/${key}_0.jpg` : null;
 }
+
+/** 한글 정식 이름 목록 (가나다순, 별명 제외). 밴픽 입력 자동완성용 */
+export const ALL_CHAMPIONS: string[] = Object.entries(KEY_TO_KO).map(([, ko]) => ko).sort((a, b) => a.localeCompare(b, "ko"));
+
+/** 입력한 글자를 챔피언 정식 이름으로. 띄어쓰기·영문·별명을 허용하고, 모르면 null */
+export function resolveChampionInput(input: string): string | null {
+  const t = input.trim();
+  if (!t) return null;
+  if (KO_TO_KEY[t]) return KEY_TO_KO[KO_TO_KEY[t]];
+  const compact = t.replace(/\s/g, "").toLowerCase();
+  for (const [ko, key] of Object.entries(KO_TO_KEY)) {
+    if (ko.replace(/\s/g, "") === compact || key.toLowerCase() === compact) return KEY_TO_KO[key];
+  }
+  return null;
+}

@@ -5,6 +5,7 @@ import { estimateRatings, RATING_VERSION } from "@/lib/rating-model";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { analyzeTeams, buildHistoryIndex, type TeamAnalysis } from "@/lib/team-analysis";
 import { BalancePairEditor, type BalancePair } from "./balance-pair-editor";
+import { DraftAssistant } from "./draft-assistant";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Shuffle, Check, Users, Zap, RefreshCw, AlertTriangle, X, Link2, Unlink, Brain } from "lucide-react";
@@ -542,6 +543,9 @@ export function BalanceTab({ playerStats, group, initialMode = "auto" }: { playe
             <TeamCard team={result.team1} label="블루팀" color="blue" tiers={displayTiers} experimental={ratingMethod === "context"} />
             <TeamCard team={result.team2} label="레드팀" color="red" tiers={displayTiers} experimental={ratingMethod === "context"} />
           </div>
+          {result.team1.length === 5 && result.team2.length === 5 && result.team1.every((p) => p.assignedLane) && (
+            <DraftAssistant key={optionIdx} team1={result.team1} team2={result.team2} matches={group.matches} />
+          )}
         </div>
       )}
     </div>

@@ -1,5 +1,6 @@
 import type { Match, MatchSource, MissingStats, PlayerStat } from "./types";
 import { calculateMvpScores } from "./mvp";
+import { matchMinutes } from "./game-score";
 import { normalizeChampionName } from "./champions";
 import { normalizeNickname } from "./nicknames";
 import { assignLanesByOrder } from "./lanes";
@@ -45,7 +46,7 @@ export function detectMissing(players: Array<Record<string, unknown>>): MissingS
 }
 
 /** DB에 저장된 참가자 배열 → 화면/통계용 PlayerStat (null→0, 미수집 플래그, 이름 정규화, MVP 재계산) */
-export function normalizePlayers(raw: unknown): { players: PlayerStat[]; missing: MissingStats } {
+export function normalizePlayers(raw: unknown, gameDuration?: string | null): { players: PlayerStat[]; missing: MissingStats } {
   const list = (Array.isArray(raw) ? raw : []) as Array<Record<string, unknown>>;
   const missing = detectMissing(list);
   const cleaned = list.map((p, i) => {
@@ -62,7 +63,7 @@ export function normalizePlayers(raw: unknown): { players: PlayerStat[]; missing
     return out as unknown as PlayerStat;
   });
   // MVP 점수는 산정식이 바뀌어도 과거 경기에 동일하게 적용되도록 읽을 때마다 재계산
-  return { players: calculateMvpScores(assignLanesByOrder(cleaned)), missing };
+  return { players: calculateMvpScores(assignLanesByOrder(cleaned), matchMinutes({ gameDuration: gameDuration || "" }), missing), missing };
 }
 
 export function normalizeBans(bans: MatchRow["bans"]): Match["bans"] | undefined {
@@ -74,7 +75,7 @@ export function normalizeBans(bans: MatchRow["bans"]): Match["bans"] | undefined
 }
 
 export function rowToMatch(row: MatchRow): Match {
-  const { players, missing } = normalizePlayers(row.players);
+  const { players, missing } = normalizePlayers(row.players, row.game_duration);
   return {
     id: row.id,
     groupId: GROUP_NAME,

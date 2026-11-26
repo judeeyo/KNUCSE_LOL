@@ -3,7 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 import { resolveSupabaseUrl } from "@/lib/supabase";
 import { GROUP_NAME, rowToMatch, type MatchRow } from "@/lib/match-normalize";
 import type { Match } from "@/lib/types";
-import { applyRoleRelativeAwards } from "@/lib/mvp";
 
 // 공유 미리보기(카톡 등)용 서버 조회. 공개 읽기 키만 쓰며, 실패하면 null 을 돌려 기본 미리보기로 대체한다.
 function client() {
@@ -20,9 +19,8 @@ export async function readMatch(id: string): Promise<Match | null> {
     const { data, error } = await sb.from("matches").select("*").eq("id", id).maybeSingle();
     if (error || !data) return null;
     const match = rowToMatch(data as MatchRow);
-    // MVP·ACE 는 사이트 화면과 같은 기준(라인 평균 대비)으로
-    const baseline = await readCountedMatches();
-    return baseline && baseline.length ? applyRoleRelativeAwards([match], baseline)[0] : match;
+    // 점수·MVP·ACE 는 rowToMatch 에서 사이트 화면과 같은 식(score-v2)으로 계산된다
+    return match;
   } catch {
     return null;
   }

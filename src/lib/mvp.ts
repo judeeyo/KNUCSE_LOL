@@ -1,180 +1,32 @@
-import type { Match, PlayerStat, Lane } from "./types";
+import type { Match, PlayerStat } from "./types";
+import { rescoreMatch, scorePlayers } from "./game-score";
 
 /**
- * 매치 내 기여도 점수 (0~10)
- *
- * 리서치 반영 (op.gg OP Score, DEEPLOL AI-Score, PandaSkill 논문):
- * - 게임 참가자 10명 전체 대비 평가 (팀 대비 X — 진 팀 혼자 잘한 선수 과대평가 방지)
- * - 포지션별 가중치: 서포터는 CS로, 정글은 라인 CS로 평가하지 않음.
- *   op.gg·PandaSkill 모두 역할(role)별로 다른 기준을 적용
- * - KDA 대신 KLA = (킬+어시스트)/(1+데스) — 0데스 특별처리 없이 수치 안정적 (PandaSkill)
- * - 라인전 보정: 같은 포지션 상대와의 골드 차이를 소폭 반영 (딥롤 GD@15 개념의 종료시점 근사)
- * - 각 지표는 "게임 평균 대비 배율"(1.0=평균, 2.5 캡) → 5.0이 평균, 10.0이 상한
- * - MVP = 이긴 팀 최고점, ACE = 진 팀 최고점 (op.gg 기준과 동일)
+ * 경기 점수(0~10)·MVP·ACE. 계산식은 game-score.ts (score-v2, 2026-11-26).
+ * MVP = 이긴 팀 최고점, ACE = 진 팀 최고점 (OP.GG 와 같은 기준). 역할 차이는 점수 안에서
+ * "같은 역할 평균 대비"로 보정하므로, 화면에 보이는 점수 1등이 그대로 MVP·ACE 가 된다.
  */
-
-type Weights = {
-  dmg: number; tank: number; obj: number; vision: number; cs: number;
-  cc: number; util: number; kla: number; kp: number;
-};
-
-// 포지션별 가중치 (각 합계 1.0)
-const ROLE_WEIGHTS: Record<Lane, Weights> = {
-  top:     { dmg: 0.20, tank: 0.20, obj: 0.10, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
-  jungle:  { dmg: 0.10, tank: 0.10, obj: 0.20, vision: 0.10, cs: 0.05, cc: 0,    util: 0,    kla: 0.20, kp: 0.25 },
-  mid:     { dmg: 0.30, tank: 0.10, obj: 0.05, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.15 },
-  adc:     { dmg: 0.30, tank: 0.05, obj: 0.10, vision: 0.05, cs: 0.20, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
-  support: { dmg: 0,    tank: 0.10, obj: 0.05, vision: 0.25, cs: 0,    cc: 0.10, util: 0.10, kla: 0.15, kp: 0.25 },
-};
-
-// 라인 정보가 없을 때의 역할 중립 가중치
-const DEFAULT_WEIGHTS: Weights = {
-  dmg: 0.25, tank: 0.10, obj: 0.10, vision: 0.10, cs: 0.10, cc: 0, util: 0, kla: 0.20, kp: 0.15,
-};
-
-export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
+export function calculateMvpScores(players: PlayerStat[], minutes = 0, missing?: Match["missing"]): PlayerStat[] {
   if (players.length === 0) return players;
-
-  const count = players.length;
-  const utilOf = (p: PlayerStat) => (p.healingDone || 0) + (p.shieldingDone || 0);
-
-  // 게임 전체(10명) 합계
-  const total = {
-    damage: players.reduce((s, p) => s + (p.damageDealt || 0), 0),
-    damageTaken: players.reduce((s, p) => s + (p.damageTaken || 0), 0),
-    objectiveDamage: players.reduce((s, p) => s + (p.objectiveDamage || 0), 0),
-    vision: players.reduce((s, p) => s + (p.visionScore || 0), 0),
-    cs: players.reduce((s, p) => s + (p.cs || 0), 0),
-    cc: players.reduce((s, p) => s + (p.ccScore || 0), 0),
-    util: players.reduce((s, p) => s + utilOf(p), 0),
+  const scored = scorePlayers(players, minutes, missing);
+  const best = (win: boolean) => {
+    const pool = scored.filter((p) => p.win === win);
+    return pool.length ? pool.reduce((x, y) => (y.mvpScore > x.mvpScore || (y.mvpScore === x.mvpScore && y.kills + y.assists > x.kills + x.assists) ? y : x)) : null;
   };
-
-  const teamKills = {
-    blue: players.filter((p) => p.team === "blue").reduce((s, p) => s + p.kills, 0),
-    red: players.filter((p) => p.team === "red").reduce((s, p) => s + p.kills, 0),
-  };
-
-  const klaOf = (p: PlayerStat) => (p.kills + p.assists) / (1 + p.deaths);
-  const kpOf = (p: PlayerStat) => {
-    const tk = teamKills[p.team];
-    return tk > 0 ? (p.kills + p.assists) / tk : 0;
-  };
-
-  const avgKla = players.reduce((s, p) => s + klaOf(p), 0) / count || 1;
-  const avgKp = players.reduce((s, p) => s + kpOf(p), 0) / count || 1;
-
-  // 게임 평균 대비 배율 (1.0 = 평균, 2.5 캡 — 한 지표 몰빵 방지, 합계 0이면 중립)
-  const CAP = 2.5;
-  const shareRatio = (value: number, totalSum: number) =>
-    totalSum > 0 ? Math.min((value / totalSum) * count, CAP) : 1;
-
-  // 같은 포지션 상대 (라인전 맞대결 비교용)
-  const laneOpponentOf = (p: PlayerStat) =>
-    p.lane ? players.find((q) => q.team !== p.team && q.lane === p.lane) : undefined;
-
-  // 역할 고유 지표는 같은 포지션 상대와 1:1 비교 (1.0 = 동률, 최대 2.0).
-  // 게임 전체 대비로 재면 서포터 시야·유틸처럼 역할 편중 지표가 매판 자동 상한을 쳐서
-  // 변별력이 사라짐 — PandaSkill의 역할별 모델 분리와 같은 취지. 상대가 없으면 전체 대비 폴백.
-  const pairRatio = (mine: number, opp: number | undefined, fallbackTotal: number) => {
-    if (opp === undefined) return shareRatio(mine, fallbackTotal);
-    const sum = mine + opp;
-    return sum > 0 ? (mine / sum) * 2 : 1;
-  };
-
-  const rawScored = players.map((p) => {
-    const w = (p.lane && ROLE_WEIGHTS[p.lane]) || DEFAULT_WEIGHTS;
-    const opp = laneOpponentOf(p);
-
-    const composite =
-      pairRatio(p.damageDealt || 0, opp && (opp.damageDealt || 0), total.damage) * w.dmg +
-      pairRatio(p.damageTaken || 0, opp && (opp.damageTaken || 0), total.damageTaken) * w.tank +
-      pairRatio(p.objectiveDamage || 0, opp && (opp.objectiveDamage || 0), total.objectiveDamage) * w.obj +
-      pairRatio(p.visionScore || 0, opp && (opp.visionScore || 0), total.vision) * w.vision +
-      pairRatio(p.cs || 0, opp && (opp.cs || 0), total.cs) * w.cs +
-      pairRatio(p.ccScore || 0, opp && (opp.ccScore || 0), total.cc) * w.cc +
-      pairRatio(utilOf(p), opp && utilOf(opp), total.util) * w.util +
-      Math.min(klaOf(p) / avgKla, CAP) * w.kla +
-      Math.min(kpOf(p) / avgKp, CAP) * w.kp;
-
-    // 라인전 보정: 같은 포지션 상대와의 골드 격차 (최대 ±0.15 → 점수 ±0.75)
-    const laneAdj = opp && opp.gold > 0
-      ? Math.max(-0.15, Math.min(0.15, (p.gold - opp.gold) / opp.gold))
-      : 0;
-
-    return { p, composite: composite + laneAdj };
+  const mvp = best(true), ace = best(false);
+  return scored.map((s) => {
+    const { breakdown, ...p } = s;
+    void breakdown;
+    return { ...p, isMvp: s === mvp, isAce: s === ace };
   });
-
-  // 게임 평균이 정확히 5.0이 되도록 정규화 (역할별 가중치로 인한 전체 인플레 제거)
-  const meanComposite =
-    rawScored.reduce((s, r) => s + r.composite, 0) / count || 1;
-
-  const scored = rawScored.map(({ p, composite }) => {
-    const score = Math.min(Math.max((composite / meanComposite) * 5, 0), 10);
-    return {
-      ...p,
-      mvpScore: Math.round(score * 10) / 10,
-      killParticipation: kpOf(p) * 100,
-    };
-  });
-
-  // MVP = 이긴 팀 최고점, ACE = 진 팀 최고점 (op.gg 기준과 동일)
-  const winners = scored.filter((p) => p.win);
-  const losers = scored.filter((p) => !p.win);
-
-  const mvp = winners.length > 0
-    ? winners.reduce((a, b) => (a.mvpScore > b.mvpScore ? a : b))
-    : null;
-  const ace = losers.length > 0
-    ? losers.reduce((a, b) => (a.mvpScore > b.mvpScore ? a : b))
-    : null;
-
-  return scored.map((p) => ({
-    ...p,
-    isMvp: mvp ? p.nickname === mvp.nickname && p.team === mvp.team : false,
-    isAce: ace ? p.nickname === ace.nickname && p.team === ace.team : false,
-  }));
 }
 
 /**
- * MVP·ACE 를 "같은 라인·같은 승패 평균 대비" 로 다시 고른다. (점수 숫자는 그대로)
- *
- * 경기 점수는 라인마다 평균이 다르다 — 특히 진 팀 서포터는 팀 킬이 적어 킬관여율이 쉽게 높아지고,
- * 탱커라 받은 피해도 점수가 돼서, 그대로 최고점을 고르면 ACE 의 절반 가까이가 서포터에게 갔다
- * (상세 데이터 22경기 중 10번). 그래서 각 선수 점수를 같은 라인·같은 승패(·같은 자료 종류) 경기들의
- * 평균·표준편차로 표준화한 값(z)으로 MVP(이긴 팀)·ACE(진 팀)를 고른다.
- * 표본이 적은 칸은 라인 구분 없이 같은 승패 전체로 대신한다.
+ * (이전 이름 유지) 경기 시간까지 넣어 점수·MVP·ACE 를 다시 계산한다.
+ * 예전에는 "같은 라인·같은 승패 평균 대비 z 점수"로 MVP 를 따로 골랐지만, 화면 점수 1등과 MVP 가
+ * 달라지는 경기가 63경기 중 14경기 생겨 score-v2 에서 없앴다. baselineFrom 은 더 이상 쓰지 않는다.
  */
-const AWARD_BASELINE_MIN = 8;
-
-export function applyRoleRelativeAwards(matches: Match[], baselineFrom: Match[] = matches): Match[] {
-  const kind = (m: Match) => (m.missing?.damage ? "basic" : "detailed");
-  const keys = (m: Match, p: PlayerStat) => [`${kind(m)}|${p.lane ?? "?"}|${p.win}`, `${kind(m)}|*|${p.win}`, `*|*|${p.win}`];
-  const pools = new Map<string, number[]>();
-  for (const m of baselineFrom) {
-    for (const p of m.players) {
-      for (const k of keys(m, p)) {
-        const arr = pools.get(k);
-        if (arr) arr.push(p.mvpScore);
-        else pools.set(k, [p.mvpScore]);
-      }
-    }
-  }
-  const stats = new Map<string, { mu: number; sd: number; n: number }>();
-  for (const [k, v] of pools) {
-    const mu = v.reduce((a, b) => a + b, 0) / v.length;
-    const sd = Math.sqrt(v.reduce((a, b) => a + (b - mu) ** 2, 0) / v.length);
-    stats.set(k, { mu, sd: sd > 0.05 ? sd : 1, n: v.length });
-  }
-  const z = (m: Match, p: PlayerStat) => {
-    const s = keys(m, p).map((k) => stats.get(k)).find((x) => x && x.n >= AWARD_BASELINE_MIN);
-    return s ? (p.mvpScore - s.mu) / s.sd : p.mvpScore - 5;
-  };
-
-  return matches.map((m) => {
-    const best = (team: PlayerStat[]) =>
-      team.length ? team.reduce((a, b) => (z(m, b) > z(m, a) || (z(m, b) === z(m, a) && b.mvpScore > a.mvpScore) ? b : a)) : null;
-    const mvp = best(m.players.filter((p) => p.win));
-    const ace = best(m.players.filter((p) => !p.win));
-    return { ...m, players: m.players.map((p) => ({ ...p, isMvp: p === mvp, isAce: p === ace })) };
-  });
+export function applyRoleRelativeAwards(matches: Match[], baselineFrom?: Match[]): Match[] {
+  void baselineFrom;
+  return matches.map(rescoreMatch);
 }

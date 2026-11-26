@@ -471,3 +471,29 @@ export function buildFeatured(group: Group, featured: (typeof FEATURED_GROUPS)[n
 }
 
 export const laneLabel = (lane: Lane) => LANE_LABEL[lane];
+
+export function phaseComparison(games: RivalGame[], lane: Lane) {
+  const periods = ["10", "15", "change"] as const;
+  const metrics = ["cs", "gold", "xp"] as const;
+  return periods.map(period => {
+    const sums = { cs: 0, gold: 0, xp: 0 };
+    let count = 0;
+    for (const game of games) {
+      if (game.lane !== lane) continue;
+      const minutes = period === "change" ? ["10", "15"] as const : [period];
+      const differences = [];
+      for (const minute of minutes) {
+        const a = game.a.phaseStats?.[minute];
+        const b = game.b.phaseStats?.[minute];
+        if (!a || !b || !metrics.every(key => Number.isFinite(a[key]) && Number.isFinite(b[key]) && a[key] >= 0 && b[key] >= 0)) continue;
+        differences.push({ cs: a.cs - b.cs, gold: a.gold - b.gold, xp: a.xp - b.xp });
+      }
+      if (differences.length !== minutes.length) continue;
+      count++;
+      for (const key of metrics) {
+        sums[key] += period === "change" ? differences[1][key] - differences[0][key] : differences[0][key];
+      }
+    }
+    return { period, count, gap: count ? { cs: sums.cs / count, gold: sums.gold / count, xp: sums.xp / count } : null };
+  });
+}

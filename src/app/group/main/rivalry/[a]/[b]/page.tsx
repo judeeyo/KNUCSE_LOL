@@ -12,7 +12,7 @@ import { LabBadge, MomentumDots, SplashBg, TitleChip } from "@/components/group/
 import { getGroup } from "@/lib/store";
 import { formatLastPlayed } from "@/lib/stats";
 import { LANE_LABEL, playerHref, resolveNickname } from "@/lib/profile";
-import { findRivalry, METRICS, rivalryHref, TIP_LABEL, type MetricCompare, type MetricValue, type RivalGame, type Rivalry, type SideSummary } from "@/lib/rivalry";
+import { phaseComparison, findRivalry, METRICS, rivalryHref, TIP_LABEL, type MetricCompare, type MetricValue, type RivalGame, type Rivalry, type SideSummary } from "@/lib/rivalry";
 import { backToList, rememberListPosition, takeListScroll } from "@/lib/list-position";
 import type { Group } from "@/lib/types";
 
@@ -165,6 +165,8 @@ export default function RivalryPage() {
               {r.lanes.length > 1 && <> 라인별 전적: {r.lanes.map((l) => `${LANE_LABEL[l.lane]} ${l.aWins}:${l.games - l.aWins}`).join(" · ")}</>}
             </p>
           </Card>
+
+          <PhaseTable r={r} />
 
           {/* 기억할 경기 + 전체 맞대결 */}
           <Card className="p-0 overflow-hidden">
@@ -343,5 +345,28 @@ function GameRow({ g, r, now, tag, onOpen }: { g: RivalGame; r: Rivalry; now: nu
         <ChampionIcon name={g.b.champion} size={30} className="rounded-md" />
       </Link>
     </li>
+  );
+}
+
+function PhaseTable({ r }: { r: Rivalry }) {
+  const rows = phaseComparison(r.games, r.mainLane);
+  if (!rows.some(row => row.count)) return null;
+  const signed = (value: number) => value.toLocaleString("ko-KR", { maximumFractionDigits: 1, signDisplay: "exceptZero" });
+  return (
+    <Card className="p-4">
+      <h2 className="text-sm font-semibold text-ink">라인전 격차</h2>
+      <p className="my-2 text-xs text-ink-tertiary">{LANE_LABEL[r.mainLane]} 맞대결 평균 · {r.a.nickname} 기준 (+는 앞섬, −는 뒤짐)</p>
+      <table className="w-full text-right text-xs tabular-nums">
+        <thead><tr><th scope="col" className="text-left">시점</th><th>CS</th><th>골드</th><th>경험치</th><th>근거</th></tr></thead>
+        <tbody>{rows.map(row => (
+          <tr key={row.period} className="border-t border-hairline">
+            <th scope="row" className="py-2 text-left">{row.period === "change" ? "10→15분 변화" : row.period + "분"}</th>
+            {(["cs", "gold", "xp"] as const).map(key => <td key={key}>{row.gap ? signed(row.gap[key]) : "—"}</td>)}
+            <td>{row.count}판</td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <p className="mt-2 text-xs text-ink-tertiary">변화는 두 선수의 10분·15분 기록이 모두 있는 경기에서 계산합니다.</p>
+    </Card>
   );
 }

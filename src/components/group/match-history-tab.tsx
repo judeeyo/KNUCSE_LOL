@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronRight, Trash2, Gamepad2, Clock, Trophy, Download } from "lucide-react";
 import { ChampionIcon } from "@/components/ui/champion-icon";
 import type { Match } from "@/lib/types";
+import { MATCH_COMMENTS } from "@/lib/match-comments";
 
 export function MatchHistoryTab({
   matches,
@@ -221,6 +222,14 @@ function MatchCard({
             <ChevronRight size={16} className="text-ink-tertiary/50" />
           </div>
         </div>
+
+        {/* 한줄평 (있는 경기만) */}
+        {MATCH_COMMENTS[match.id] && (
+          <div className="mt-3 flex items-start gap-2 border-t border-hairline/60 pt-2.5">
+            <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary-hover">한줄평</span>
+            <p className="text-xs leading-relaxed text-ink-muted break-keep">{MATCH_COMMENTS[match.id].text}</p>
+          </div>
+        )}
       </div>
       </div>
     </div>

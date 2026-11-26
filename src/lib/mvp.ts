@@ -8,28 +8,28 @@ import type { Match, PlayerStat, Lane } from "./types";
  * - 포지션별 가중치: 서포터는 CS로, 정글은 라인 CS로 평가하지 않음.
  *   op.gg·PandaSkill 모두 역할(role)별로 다른 기준을 적용
  * - KDA 대신 KLA = (킬+어시스트)/(1+데스) — 0데스 특별처리 없이 수치 안정적 (PandaSkill)
- * - 라인전 보정: 같은 포지션 상대와의 골드 차이를 소폭 반영 (딥롤 GD@15 개념의 종료시점 근사)
+ * - 라인전 보정: 양쪽에 실측된 15분 또는 10분 성장 격차 반영
  * - 각 지표는 "게임 평균 대비 배율"(1.0=평균, 2.5 캡) → 5.0이 평균, 10.0이 상한
  * - MVP = 이긴 팀 최고점, ACE = 진 팀 최고점 (op.gg 기준과 동일)
  */
 
 type Weights = {
-  dmg: number; tank: number; obj: number; vision: number; cs: number;
+  dmg: number; combatShare: number; obj: number; vision: number; cs: number;
   cc: number; util: number; kla: number; kp: number;
 };
 
 // 포지션별 가중치 (각 합계 1.0)
 const ROLE_WEIGHTS: Record<Lane, Weights> = {
-  top:     { dmg: 0.20, tank: 0.20, obj: 0.10, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
-  jungle:  { dmg: 0.10, tank: 0.10, obj: 0.20, vision: 0.10, cs: 0.05, cc: 0,    util: 0,    kla: 0.20, kp: 0.25 },
-  mid:     { dmg: 0.30, tank: 0.10, obj: 0.05, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.15 },
-  adc:     { dmg: 0.30, tank: 0.05, obj: 0.10, vision: 0.05, cs: 0.20, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
-  support: { dmg: 0,    tank: 0.10, obj: 0.05, vision: 0.25, cs: 0,    cc: 0.10, util: 0.10, kla: 0.15, kp: 0.25 },
+  top:     { dmg: 0.20, combatShare: 0.20, obj: 0.10, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
+  jungle:  { dmg: 0.10, combatShare: 0.10, obj: 0.20, vision: 0.10, cs: 0.05, cc: 0,    util: 0,    kla: 0.20, kp: 0.25 },
+  mid:     { dmg: 0.30, combatShare: 0.10, obj: 0.05, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.15 },
+  adc:     { dmg: 0.30, combatShare: 0.05, obj: 0.10, vision: 0.05, cs: 0.20, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
+  support: { dmg: 0,    combatShare: 0.10, obj: 0.05, vision: 0.25, cs: 0,    cc: 0.10, util: 0.10, kla: 0.15, kp: 0.25 },
 };
 
 // 라인 정보가 없을 때의 역할 중립 가중치
 const DEFAULT_WEIGHTS: Weights = {
-  dmg: 0.25, tank: 0.10, obj: 0.10, vision: 0.10, cs: 0.10, cc: 0, util: 0, kla: 0.20, kp: 0.15,
+  dmg: 0.25, combatShare: 0.10, obj: 0.10, vision: 0.10, cs: 0.10, cc: 0, util: 0, kla: 0.20, kp: 0.15,
 };
 
 export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
@@ -40,8 +40,6 @@ export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
 
   // 게임 전체(10명) 합계
   const total = {
-    damage: players.reduce((s, p) => s + (p.damageDealt || 0), 0),
-    damageTaken: players.reduce((s, p) => s + (p.damageTaken || 0), 0),
     objectiveDamage: players.reduce((s, p) => s + (p.objectiveDamage || 0), 0),
     vision: players.reduce((s, p) => s + (p.visionScore || 0), 0),
     cs: players.reduce((s, p) => s + (p.cs || 0), 0),
@@ -81,13 +79,24 @@ export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
     return sum > 0 ? (mine / sum) * 2 : 1;
   };
 
+  // Public metric definitions: https://lol.ps/stats/counter/sample
+  const teamDamage = { blue: 0, red: 0 };
+  const complete = { blue: true, red: true };
+  for (const p of players) {
+    if (p.damageDealt == null) complete[p.team] = false;
+    else teamDamage[p.team] += p.damageDealt;
+  }
+  const damageShare = (p: PlayerStat) => complete[p.team] && teamDamage[p.team] > 0
+    ? (p.damageDealt ?? 0) / teamDamage[p.team] : null;
+  const efficiency = (p: PlayerStat) => p.damageDealt != null && p.gold > 0 ? 1000 * p.damageDealt / p.gold : null;
+  const compare = (a: number | null, b: number | null) => a == null || b == null || a + b === 0 ? 1 : 2 * a / (a + b);
   const rawScored = players.map((p) => {
     const w = (p.lane && ROLE_WEIGHTS[p.lane]) || DEFAULT_WEIGHTS;
     const opp = laneOpponentOf(p);
 
     const composite =
-      pairRatio(p.damageDealt || 0, opp && (opp.damageDealt || 0), total.damage) * w.dmg +
-      pairRatio(p.damageTaken || 0, opp && (opp.damageTaken || 0), total.damageTaken) * w.tank +
+      (opp ? compare(efficiency(p), efficiency(opp)) : 1) * w.dmg +
+      (opp && p.lane !== "support" ? compare(damageShare(p), damageShare(opp)) : 1) * w.combatShare +
       pairRatio(p.objectiveDamage || 0, opp && (opp.objectiveDamage || 0), total.objectiveDamage) * w.obj +
       pairRatio(p.visionScore || 0, opp && (opp.visionScore || 0), total.vision) * w.vision +
       pairRatio(p.cs || 0, opp && (opp.cs || 0), total.cs) * w.cs +
@@ -96,10 +105,12 @@ export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
       Math.min(klaOf(p) / avgKla, CAP) * w.kla +
       Math.min(kpOf(p) / avgKp, CAP) * w.kp;
 
-    // 라인전 보정: 같은 포지션 상대와의 골드 격차 (최대 ±0.15 → 점수 ±0.75)
-    const laneAdj = opp && opp.gold > 0
-      ? Math.max(-0.15, Math.min(0.15, (p.gold - opp.gold) / opp.gold))
-      : 0;
+    // 라인전 보정: 동일 시점 성장 격차를 최대 ±0.15로 제한
+    const minute = p.phaseStats?.["15"] && opp?.phaseStats?.["15"] ? "15" : "10";
+    const mine = p.phaseStats?.[minute], theirs = opp?.phaseStats?.[minute];
+    const growth = mine && theirs ? [compare(mine.gold, theirs.gold), compare(mine.xp, theirs.xp)] : [];
+    if (mine && theirs && p.lane !== "support") growth.push(compare(mine.cs, theirs.cs));
+    const laneAdj = growth.length ? Math.max(-0.15, Math.min(0.15, growth.reduce((a, b) => a + b, 0) / growth.length - 1)) : 0;
 
     return { p, composite: composite + laneAdj };
   });

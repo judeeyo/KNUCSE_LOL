@@ -20,11 +20,11 @@ type Weights = {
 
 // 포지션별 가중치 (각 합계 1.0)
 const ROLE_WEIGHTS: Record<Lane, Weights> = {
-  top:     { dmg: 0.20, combatShare: 0.20, obj: 0.10, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
+  top:     { dmg: 0.20, combatShare: 0.10, obj: 0.10, vision: 0.05, cs: 0.15, cc: 0.05, util: 0,    kla: 0.25, kp: 0.10 },
   jungle:  { dmg: 0.10, combatShare: 0.10, obj: 0.20, vision: 0.10, cs: 0.05, cc: 0,    util: 0,    kla: 0.20, kp: 0.25 },
   mid:     { dmg: 0.30, combatShare: 0.10, obj: 0.05, vision: 0.05, cs: 0.15, cc: 0,    util: 0,    kla: 0.20, kp: 0.15 },
   adc:     { dmg: 0.30, combatShare: 0.05, obj: 0.10, vision: 0.05, cs: 0.20, cc: 0,    util: 0,    kla: 0.20, kp: 0.10 },
-  support: { dmg: 0,    combatShare: 0.10, obj: 0.05, vision: 0.25, cs: 0,    cc: 0.10, util: 0.10, kla: 0.15, kp: 0.25 },
+  support: { dmg: 0,    combatShare: 0, obj: 0.05, vision: 0.30, cs: 0,    cc: 0.15, util: 0.10, kla: 0.15, kp: 0.25 },
 };
 
 // 라인 정보가 없을 때의 역할 중립 가중치
@@ -103,7 +103,7 @@ export function calculateMvpScores(players: PlayerStat[]): PlayerStat[] {
       pairRatio(p.ccScore || 0, opp && (opp.ccScore || 0), total.cc) * w.cc +
       pairRatio(utilOf(p), opp && utilOf(opp), total.util) * w.util +
       Math.min(klaOf(p) / avgKla, CAP) * w.kla +
-      Math.min(kpOf(p) / avgKp, CAP) * w.kp;
+      (teamKills[p.team] > 0 ? Math.min(kpOf(p) / avgKp, CAP) : 1) * w.kp;
 
     // 라인전 보정: 동일 시점 성장 격차를 최대 ±0.15로 제한
     const minute = p.phaseStats?.["15"] && opp?.phaseStats?.["15"] ? "15" : "10";
@@ -189,3 +189,4 @@ export function applyRoleRelativeAwards(matches: Match[], baselineFrom: Match[] 
     return { ...m, players: m.players.map((p) => ({ ...p, isMvp: p === mvp, isAce: p === ace })) };
   });
 }
+

@@ -127,7 +127,14 @@ function rolePerformance(group: Group): Map<PlayerStat, number> {
     const valid = values.filter((v): v is number => v !== null);
     return valid.length ? valid.reduce((sum, v) => sum + v, 0) / valid.length : null;
   };
+  // LOL.PS 공개 지표 정의: https://lol.ps/stats/counter/sample
+  const perGold = (p: PlayerStat) => p.damageDealt != null && p.gold > 0
+    ? p.damageDealt / p.gold * 1000 : null;
   for (const match of group.matches) {
+    const teamKills = { blue: 0, red: 0 };
+    for (const player of match.players) teamKills[player.team] += player.kills;
+    const participation = (p: PlayerStat) => teamKills[p.team] > 0
+      ? (p.kills + p.assists) / teamKills[p.team] : null;
     for (const p of match.players) {
       const opponents = match.players.filter(q => p.lane && q.lane === p.lane && q.team !== p.team);
       const q = opponents.length === 1 ? opponents[0] : undefined;
@@ -138,8 +145,8 @@ function rolePerformance(group: Group): Map<PlayerStat, number> {
         const a = p.phaseStats?.[minute], b = q.phaseStats?.[minute];
         const support = p.lane === "support";
         const lane = mean([ratio(a?.gold, b?.gold), ratio(a?.xp, b?.xp), support ? null : ratio(a?.cs, b?.cs)]);
-        const combat = mean([ratio(p.kills + p.assists, q.kills + q.assists),
-          ratio(q.deaths + 1, p.deaths + 1), support ? null : ratio(p.damageDealt, q.damageDealt)]);
+        const combat = mean([ratio(participation(p), participation(q)),
+          ratio(q.deaths + 1, p.deaths + 1), support || match.missing?.damage ? null : ratio(perGold(p), perGold(q))]);
         const role = support ? mean([ratio(p.visionScore, q.visionScore), ratio(p.ccScore, q.ccScore),
           ratio(p.shieldingDone, q.shieldingDone), ratio(p.healingDone, q.healingDone)]) :
           mean([ratio(p.objectiveDamage, q.objectiveDamage), ratio(p.visionScore, q.visionScore)]);

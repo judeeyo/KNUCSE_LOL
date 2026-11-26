@@ -123,6 +123,8 @@ function rolePerformance(group: Group): Map<PlayerStat, number> {
   const ratio = (a?: number | null, b?: number | null) =>
     a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b) ? null :
       a + b === 0 ? 50 : 100 * a / (a + b);
+  const optionalRatio = (a?: number | null, b?: number | null) =>
+    (a ?? 0) + (b ?? 0) === 0 ? null : ratio(a, b);
   const mean = (values: (number | null)[]) => {
     const valid = values.filter((v): v is number => v !== null);
     return valid.length ? valid.reduce((sum, v) => sum + v, 0) / valid.length : null;
@@ -138,22 +140,34 @@ function rolePerformance(group: Group): Map<PlayerStat, number> {
     for (const p of match.players) {
       const opponents = match.players.filter(q => p.lane && q.lane === p.lane && q.team !== p.team);
       const q = opponents.length === 1 ? opponents[0] : undefined;
-      const parts: [number, number | null][] = [[20, p.win ? 100 : 0]];
+      const parts: [number, number | null][] = [];
       if (q) {
         // 두 선수 모두 기록된 가장 늦은 시점을 사용한다.
         const minute = p.phaseStats?.["15"] && q.phaseStats?.["15"] ? "15" : "10";
         const a = p.phaseStats?.[minute], b = q.phaseStats?.[minute];
         const support = p.lane === "support";
-        const lane = mean([ratio(a?.gold, b?.gold), ratio(a?.xp, b?.xp), support ? null : ratio(a?.cs, b?.cs)]);
+        const growth = a && b
+          ? mean([ratio(a.gold, b.gold), ratio(a.xp, b.xp), support ? null : ratio(a.cs, b.cs)])
+          : support ? null : mean([
+            p.gold > 0 && q.gold > 0 ? ratio(p.gold, q.gold) : null,
+            p.cs + q.cs > 0 ? ratio(p.cs, q.cs) : null,
+          ]);
         const combat = mean([ratio(participation(p), participation(q)),
           ratio(q.deaths + 1, p.deaths + 1), support || match.missing?.damage ? null : ratio(perGold(p), perGold(q))]);
-        const role = support ? mean([ratio(p.visionScore, q.visionScore), ratio(p.ccScore, q.ccScore),
-          ratio(p.shieldingDone, q.shieldingDone), ratio(p.healingDone, q.healingDone)]) :
-          mean([ratio(p.objectiveDamage, q.objectiveDamage), ratio(p.visionScore, q.visionScore)]);
-        parts.push([30, lane], [30, combat], [20, role]);
+        const role = support ? mean([(match.missing?.vision ? null : ratio(p.visionScore, q.visionScore)), optionalRatio(p.ccScore, q.ccScore),
+          optionalRatio(p.shieldingDone, q.shieldingDone), optionalRatio(p.healingDone, q.healingDone)]) :
+          mean([optionalRatio(p.objectiveDamage, q.objectiveDamage), (match.missing?.vision ? null : ratio(p.visionScore, q.visionScore))]);
+        parts.push([a && b ? 25 : 15, growth], [40, combat], [35, role]);
       }
-      // 누락된 영역은 중립. 관측된 승패만으로 0점이나 100점이 되는 것을 방지한다.
-      scores.set(p, parts.reduce((sum, [weight, value]) => sum + weight * ((value ?? 50) - 50) / 100, 50));
+      // 관측된 개인 지표끼리 가중 평균을 낸다. 승패는 항상 10%만 반영한다.
+      let individual = 0;
+      let observedWeight = 0;
+      for (const [weight, value] of parts) {
+        if (value === null) continue;
+        individual += weight * value;
+        observedWeight += weight;
+      }
+      scores.set(p, 0.9 * (observedWeight ? individual / observedWeight : 50) + (p.win ? 10 : 0));
     }
   }
   return scores;
@@ -1295,3 +1309,4 @@ export function capDuosPerPlayer(list: DuoRecord[], max: number): DuoRecord[] {
   }
   return out;
 }
+

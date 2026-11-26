@@ -72,7 +72,7 @@ export function RivalryTab({ group }: { group: Group }) {
   const [lane, setLane] = useState<Lane | "all">("all");
   const rivalries = useMemo(() => buildRivalries(group, now), [group, now]);
   const featured = useMemo(() => FEATURED_GROUPS.map((f) => buildFeatured(group, f, now)).filter((f) => f.pairs.length > 0), [group, now]);
-  const shown = rivalries.filter((r) => lane === "all" || r.mainLane === lane);
+  const shown = rivalries.filter((r) => lane === "all" || r.lanes.some((l) => l.lane === lane));
   const open = () => rememberListPosition("rivalry");
 
   return (
@@ -179,7 +179,7 @@ function RivalryRow({ r, onOpen }: { r: Rivalry; onOpen: () => void }) {
           {r.b.mainChampion && <ChampionIcon name={r.b.mainChampion} size={28} className="rounded-md" />}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-9 pr-9 text-[11px] text-ink-tertiary">
-          <span>{LANE_LABEL[r.mainLane]} · {n}판 · {r.confidence}</span>
+          <span>{r.lanes.length > 1 ? r.lanes.map((l) => `${LANE_LABEL[l.lane]} ${l.games}`).join(" · ") : `${LANE_LABEL[r.mainLane]} ${n}판`} · {r.confidence}</span>
           <MomentumDots r={r} count={5} />
           {headline && <TitleChip t={headline} />}
         </div>

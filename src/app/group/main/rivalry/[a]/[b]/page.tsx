@@ -251,9 +251,13 @@ function EdgeSummary({ r }: { r: Rivalry }) {
   if (r.comparison.every((c) => c.diff === null)) return <span className="text-xs"> · 자료 부족</span>;
   if (a === b) return <span className="ml-1 text-xs font-normal text-ink-subtle">· 팽팽 ({a}:{b})</span>;
   const lead = a > b ? r.a.nickname : r.b.nickname;
+  // 지표는 앞서는데 전적은 밀리는 경우 (승패는 팀 결과라 흔히 생김)
+  const recordLead = r.a.wins === r.b.wins ? null : r.a.wins > r.b.wins ? "a" : "b";
+  const mismatch = recordLead !== null && recordLead !== (a > b ? "a" : "b");
   return (
     <span className="ml-1 text-xs font-normal text-ink-subtle">
       · <span className={a > b ? "text-blue-300" : "text-red-300"}>{lead}</span> {Math.max(a, b)}개 우세 ({a}:{b})
+      {mismatch && <span className="text-mvp"> · 지표는 앞서지만 전적은 열세</span>}
     </span>
   );
 }

@@ -14,6 +14,7 @@ import { AdminCancelledError } from "@/lib/admin-client";
 import { backToList } from "@/lib/list-position";
 import Link from "next/link";
 import { playerHref } from "@/lib/profile";
+import { MATCH_COMMENTS } from "@/lib/match-comments";
 import type { Match, PlayerStat, Member, TeamObjectives } from "@/lib/types";
 
 const LANE_EMOJI: Record<string, string> = {
@@ -325,6 +326,12 @@ export default function MatchDetailPage() {
         const realIdx = redIdxMap[idx];
         if (realIdx !== undefined) setEditPlayers(prev => { const next = [...prev]; next[realIdx] = { ...next[realIdx], [field]: val }; return next; });
       } : undefined} />
+      {MATCH_COMMENTS[match.id] && !editing && (
+        <Card className="mt-4 flex items-start gap-3 px-4 py-3">
+          <span className="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary-hover">한줄평</span>
+          <p className="text-sm leading-relaxed text-ink-muted break-keep">{MATCH_COMMENTS[match.id].text}</p>
+        </Card>
+      )}
       </div>
     </div>
   );

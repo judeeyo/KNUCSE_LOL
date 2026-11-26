@@ -263,9 +263,13 @@ function buildTips(games: RivalGame[], me: "a" | "b", usualRows: MetricRows): Ti
     const vs = `상대가 ${c.champion}일 때`;
     const cs = delta(rows, "csPerMin");
     const de = delta(rows, "deaths");
-    if (cs !== null && cs <= -0.7) push("oppChamp", -cs * 1.3, `${vs} 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 무리한 파밍 경쟁보다 웨이브 관리`);
-    if (de !== null && de >= 1.5) push("oppChamp", de * 0.9, `${vs} 데스 평소보다 ${fmtSigned(de)} (${c.games}판) → 초반 교전 피하고 사거리·쿨타임 확인`);
-    if (cs !== null && cs >= 0.7 && (de === null || de < 1)) push("oppChamp", cs * 0.8, `${vs}는 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 라인 우위 살리기 좋음`);
+    // 같은 챔피언 문장은 하나로 합친다 (예: "데스 +2.1 · 분당 CS -1.2")
+    const csLow = cs !== null && cs <= -0.7, deathHigh = de !== null && de >= 1.5;
+    if (csLow || deathHigh) {
+      const parts = [deathHigh && `데스 ${fmtSigned(de!)}`, csLow && `분당 CS ${fmtSigned(cs!)}`].filter(Boolean).join(" · ");
+      const advice = deathHigh ? "초반 교전 피하고 사거리·쿨타임 확인" : "무리한 파밍 경쟁보다 웨이브 관리";
+      push("oppChamp", (deathHigh ? de! * 0.9 : 0) + (csLow ? -cs! * 1.3 : 0), `${vs} 평소보다 ${parts} (${c.games}판) → ${advice}`);
+    } else if (cs !== null && cs >= 0.7 && (de === null || de < 1)) push("oppChamp", cs * 0.8, `${vs}는 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 라인 우위 살리기 좋음`);
   }
 
   // 3. 내 챔피언별 (이 맞대결에서 2판 이상)
@@ -273,12 +277,10 @@ function buildTips(games: RivalGame[], me: "a" | "b", usualRows: MetricRows): Ti
     const rows = rowsOf(games.filter((g) => g[me].champion === c.champion));
     const with_ = `${josa(c.champion, "으로", "로")} 할 때`;
     const de = delta(rows, "deaths");
-    const dmg = delta(rows, "damageShare");
     const cs = delta(rows, "csPerMin");
     const kda = delta(rows, "kda");
     const kp = delta(rows, "kp");
     if (de !== null && de >= 1.5) push("myChamp", de * 0.9, `${with_} 데스 평소보다 ${fmtSigned(de)} (${c.games}판) → 무리한 진입 자제, 합류 타이밍에 집중`);
-    if (dmg !== null && dmg <= -4) push("myChamp", -dmg / 4, `${with_} 팀 내 딜 비중 평소보다 ${fmtSigned(dmg, 0)}%p → 딜보다 탱킹·이니시·스플릿에 집중`);
     if (cs !== null && cs <= -0.7) push("myChamp", -cs, `${with_} 분당 CS 평소보다 ${fmtSigned(cs)} (${c.games}판) → 라인전 파밍에 더 신경`);
     if (kp !== null && kp >= 10) push("myChamp", kp / 10, `${with_} 킬관여 평소보다 ${fmtSigned(kp, 0)}%p → 텔·합류로 팀을 돕는 플레이가 맞음`);
     if (kda !== null && kda >= 1) push("myChamp", kda * 0.7, `${with_} KDA 평소보다 ${fmtSigned(kda)} (${c.games}판 ${c.wins}승) → ${c.wins * 2 > c.games ? "믿을 만한 픽" : "성적은 좋지만 승리로 잘 안 이어짐"}`);
